@@ -15,6 +15,8 @@
 --   editions.collection_key, volume, release_on
 --                            metadata for the mirrored Library (a volume set
 --                            shows as one card) and the release queue.
+--   edition_assets.kind      gains 'sample' (the first N pages as a PDF); the
+--                            public bucket edition-samples holds those files.
 --   reader_subscriptions     one row per member, written only by the Stripe
 --                            webhook (service role), readable by its owner.
 --   _reader_is_member(uuid)  the membership question, SECURITY INVOKER.
@@ -109,6 +111,33 @@ drop trigger if exists editions_access_sync on public.editions;
 create trigger editions_access_sync
   before insert or update of price_cents, access on public.editions
   for each row execute function public.editions_access_sync();
+
+-- ============================================================================
+-- The sample: a fourth asset kind and a public bucket
+-- ============================================================================
+
+-- At publish the server cuts the first N pages (10%, floor 8, ceiling 30 —
+-- D13) into a second PDF and stores it as kind 'sample' in the PUBLIC bucket
+-- edition-samples/<edition id>/<version>.pdf, cacheable at the edge. The row
+-- lives in edition_assets like the others (its storage_path is still
+-- <edition id>/<file>; which bucket is implied by the kind). One sample per
+-- edition: a Publish update replaces it.
+alter table public.edition_assets drop constraint if exists edition_assets_kind_check;
+alter table public.edition_assets drop constraint if exists edition_assets_kind_check_2s;
+alter table public.edition_assets
+  add constraint edition_assets_kind_check_2s check (kind in ('book', 'media', 'cover', 'sample'));
+
+create unique index if not exists edition_assets_one_sample_idx
+  on public.edition_assets (edition_id) where kind = 'sample';
+
+comment on column public.edition_assets.kind is
+  'book (the PDF, private bucket editions), media (a clip), cover, sample (the first N pages as a PDF in the PUBLIC bucket edition-samples — the only file of an edition anyone may fetch without the gate).';
+
+-- Public: anyone may read; nothing is written but with the service role
+-- (no storage policy grants a signed-in user anything here).
+insert into storage.buckets (id, name, public)
+values ('edition-samples', 'edition-samples', true)
+on conflict (id) do nothing;
 
 -- ============================================================================
 -- reader_subscriptions — one row per member; the Stripe webhook writes it
