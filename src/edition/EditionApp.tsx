@@ -9,7 +9,7 @@ import type { MoreItem } from '@/components/reader/reader-chrome';
 import {
   type Edition, type EditionRights,
   type LibraryBook,
-  listMyEditions, listOwnedEditions, getEdition, createEdition, updateEdition, deleteEdition,
+  listVisibleEditions, listOwnedEditions, getEdition, createEdition, updateEdition, deleteEdition,
   uploadAsset, listAssets, coverUrl, publishEdition, editionSource, editionMarks, editionBench,
   listLibraryPdfs, copyBookFromDocument,
 } from './editions';
