@@ -149,6 +149,10 @@
       "destination": "/reader.html?book=:id"
     },
     {
+      "source": "/addin",
+      "destination": "/addin.html"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Equazia for Word</title>
+    <!-- The Word task pane (docs/specs/WORD-ADDIN-2026-11-01.md). Served as
+         /addin (see vercel.json). Office.js must be the CDN copy, loaded as a
+         classic script before the app; on load it nulls history.pushState /
+         replaceState, so both are kept here and put back by the bridge. -->
+    <script>
+      window.__equaziaHistory = { pushState: history.pushState, replaceState: history.replaceState };
+    </script>
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0b0b12; color: #f4f1ea; }
+      #root { height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/addin/main.tsx"></script>
+  </body>
+</html>
