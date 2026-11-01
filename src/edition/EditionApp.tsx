@@ -116,22 +116,55 @@ function Trouble({ text }: { text: string | null }) {
 
 const COVER = '/reader-cover-peacock.jpg';
 const COVER_SOFT = '/reader-cover-peacock-blur.jpg';
+const GOLD = '#d9bd7a';
+const CLOTH = '#1b1a15';
+const COVER_ASPECT = '513 / 793';
+/** Where the title lettering was on the 1894 cover, as fractions of the picture. */
+const TITLE_BLOCK = { left: '29%', top: '56%', width: '60%', height: '40%' };
+
+const goldField =
+  'w-full rounded-md border px-3 py-2 text-[15px] outline-none placeholder:text-[#9b8a5e] focus:border-[#f0d890]';
+const goldFieldStyle = { borderColor: 'rgba(217,189,122,0.5)', background: 'rgba(8,8,6,0.5)', color: '#f1e3b8' } as const;
+const goldPrimary =
+  'inline-flex items-center gap-2 rounded-md px-4 py-2 text-[14px] font-medium disabled:opacity-50';
+
+function useWideCover() {
+  const q = '(min-width: 640px) and (min-height: 700px)';
+  const [wide, setWide] = useState(() => window.matchMedia(q).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(q);
+    const on = () => setWide(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return wide;
+}
+
+function CoverMark({ wide }: { wide: boolean }) {
+  return (
+    <div className="select-none text-center" style={{ fontFamily: SERIF, color: GOLD, lineHeight: 1 }}>
+      <div style={{ fontWeight: 600, fontSize: wide ? 46 : 36, letterSpacing: '0.02em' }}>Grapheon</div>
+      <div style={{ fontStyle: 'italic', fontSize: wide ? 26 : 20, opacity: 0.9, marginTop: 6 }}>Reader</div>
+    </div>
+  );
+}
 
 /**
- * The cover. The peacock portrait is the whole screen on a phone, with the
- * wordmark and the form on a parchment sheet rising over her train. On a wide
- * screen the sharp portrait keeps its own proportions on the left, the softened
- * copy of the same picture fills the rest so the cover reads as one piece, and
- * the parchment sheet sits over that softened field.
+ * The cover: Hugh Thomson's gilt peacock from the 1894 Pride and Prejudice
+ * (public domain), its title lettering cleared. The Reader's mark and the
+ * sign-in sit where that lettering was. On a wide screen the whole cover
+ * stands at full height with the form inside the title block; on a phone the
+ * cover spans the width, the mark and the line take the title block, and the
+ * fields follow on the cloth beneath.
  */
 function SignIn() {
+  const wide = useWideCover();
   const [mode, setMode] = useState<'in' | 'new'>('in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [trouble, setTrouble] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -168,52 +201,64 @@ function SignIn() {
 
   const swap = () => { setMode(mode === 'in' ? 'new' : 'in'); setTrouble(null); setNote(null); };
 
-  return (
-    <div className="relative min-h-full overflow-hidden" style={{ background: '#1f2419', color: '#2b2315' }}>
-      {/* The picture: soft copy underneath (also the wide-screen field), sharp portrait over it. */}
-      <img src={COVER_SOFT} alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" style={{ filter: 'blur(18px) brightness(0.55) saturate(1.1)', transform: 'scale(1.1)' }} />
-      <img
-        src={COVER} alt="A woman robed in peacock feathers, winged, among white roses and blue hydrangeas"
-        onLoad={() => setLoaded(true)}
-        className="absolute inset-y-0 left-0 h-full w-full object-cover transition-opacity duration-700 sm:w-auto sm:max-w-[62vw]"
-        style={{ objectPosition: '50% 12%', opacity: loaded ? 1 : 0 }}
-      />
-      {/* Phone: a dark lead-in so the sheet rises out of the picture rather than cutting it. */}
-      <div className="absolute inset-x-0 bottom-0 h-[55vh] sm:hidden" style={{ background: 'linear-gradient(180deg, rgba(20,22,16,0) 0%, rgba(20,22,16,0.55) 60%, rgba(20,22,16,0.8) 100%)' }} />
+  const line = (
+    <p className="text-center leading-snug" style={{ fontFamily: SERIF, color: 'rgba(233,214,160,0.92)', fontSize: wide ? 17 : 15 }}>
+      Your customizable library, built and curated for you by the editors at Grapheon.ai. Sign in to begin exploring.
+    </p>
+  );
 
-      {/* The sheet. */}
-      <div className="relative flex min-h-[100dvh] flex-col justify-end sm:flex-row sm:items-center sm:justify-end sm:px-[6vw]">
-        <div
-          className="w-full rounded-t-3xl px-6 pb-8 pt-7 sm:w-[420px] sm:rounded-2xl sm:px-9 sm:py-10"
-          style={{ background: 'rgba(244,236,216,0.94)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', boxShadow: '0 30px 60px rgba(0,0,0,0.35)' }}
-        >
-          <Wordmark />
-          <p className="mt-3 leading-relaxed opacity-85" style={{ fontFamily: SERIF, fontSize: 18 }}>
-            Your customizable library, built and curated for you by the editors at Grapheon.ai. Sign in to begin exploring.
-          </p>
-          <form onSubmit={submit} className="mt-6 space-y-3">
-            <input className={field} type="email" autoComplete="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <input className={field} type="password" autoComplete={mode === 'in' ? 'current-password' : 'new-password'} placeholder={mode === 'in' ? 'Password' : 'Choose a password'} value={password} onChange={(e) => setPassword(e.target.value)} />
-            <Trouble text={trouble} />
-            {note && <p className="rounded-md border border-[#c9b98f] bg-[#fbf6ea] px-3 py-2 text-[13px]">{note}</p>}
-            <div className="flex items-center justify-between gap-3 pt-1">
-              <button className={primary} type="submit" disabled={busy || !email || !password}>
-                <BookOpen size={16} /> {busy ? (mode === 'in' ? 'Signing in…' : 'Creating…') : mode === 'in' ? 'Sign in' : 'Create account'}
-              </button>
-              <button type="button" onClick={swap} className="text-[13px] underline underline-offset-2 opacity-75 hover:opacity-100">
-                {mode === 'in' ? 'Create an account' : 'I have an account'}
-              </button>
-            </div>
-          </form>
-          {mode === 'new' && (
-            <p className="mt-4 text-[12px] leading-relaxed opacity-65">
-              By creating an account you accept the{' '}
-              <a href="https://www.equazia.ai/terms" className="underline underline-offset-2">Terms of Service</a> and the{' '}
-              <a href="https://www.equazia.ai/privacy" className="underline underline-offset-2">Privacy</a> page.
-            </p>
-          )}
+  const form = (
+    <form onSubmit={submit} className="space-y-2.5">
+      <input className={goldField} style={goldFieldStyle} type="email" autoComplete="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <input className={goldField} style={goldFieldStyle} type="password" autoComplete={mode === 'in' ? 'current-password' : 'new-password'} placeholder={mode === 'in' ? 'Password' : 'Choose a password'} value={password} onChange={(e) => setPassword(e.target.value)} />
+      <Trouble text={trouble} />
+      {note && <p className="rounded-md border px-3 py-2 text-[13px]" style={{ borderColor: 'rgba(217,189,122,0.5)', color: '#f1e3b8' }}>{note}</p>}
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} type="submit" disabled={busy || !email || !password}>
+          <BookOpen size={16} /> {busy ? (mode === 'in' ? 'Signing in…' : 'Creating…') : mode === 'in' ? 'Sign in' : 'Create account'}
+        </button>
+        <button type="button" onClick={swap} className="text-[13px] underline underline-offset-2" style={{ color: GOLD }}>
+          {mode === 'in' ? 'Create an account' : 'I have an account'}
+        </button>
+      </div>
+      {mode === 'new' && (
+        <p className="pt-1 text-[12px] leading-relaxed" style={{ color: 'rgba(233,214,160,0.7)' }}>
+          By creating an account you accept the{' '}
+          <a href="https://www.equazia.ai/terms" className="underline underline-offset-2">Terms of Service</a> and the{' '}
+          <a href="https://www.equazia.ai/privacy" className="underline underline-offset-2">Privacy</a> page.
+        </p>
+      )}
+    </form>
+  );
+
+  const alt = 'The gilt peacock of the 1894 Pride and Prejudice cover, drawn by Hugh Thomson';
+
+  if (wide) {
+    return (
+      <div className="relative min-h-[100dvh] overflow-hidden" style={{ background: CLOTH }}>
+        <img src={COVER_SOFT} alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" style={{ filter: 'blur(26px) brightness(0.5)', transform: 'scale(1.15)' }} />
+        <div className="relative mx-auto h-[100dvh]" style={{ aspectRatio: COVER_ASPECT, boxShadow: '0 0 80px rgba(0,0,0,0.6)' }}>
+          <img src={COVER} alt={alt} className="absolute inset-0 h-full w-full" />
+          <div className="absolute flex flex-col justify-center gap-4 px-3" style={TITLE_BLOCK}>
+            <CoverMark wide />
+            {line}
+            {form}
+          </div>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="min-h-[100dvh]" style={{ background: CLOTH }}>
+      <div className="relative mx-auto w-full max-w-[480px]" style={{ aspectRatio: COVER_ASPECT }}>
+        <img src={COVER} alt={alt} className="absolute inset-0 h-full w-full" />
+        <div className="absolute flex flex-col justify-center gap-3 px-1" style={TITLE_BLOCK}>
+          <CoverMark wide={false} />
+          {line}
+        </div>
+      </div>
+      <div className="mx-auto w-full max-w-[480px] px-5 pb-10 pt-4">{form}</div>
     </div>
   );
 }
