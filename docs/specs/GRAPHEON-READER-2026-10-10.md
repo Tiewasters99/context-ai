@@ -196,6 +196,8 @@ _edition_can_read(p_edition)   new clause, before the purchases check:
 
 RLS: `reader_subscriptions` readable by its owner (so the app can show *Member until 24 Nov*), written only by the Stripe webhook (service role). Invoker wrappers as always. `api/editions.mjs` keeps answering AS THE USER, so the gate is one function in one place.
 
+**As built (migration 126, 2026-10-29) — two refinements on the safe side.** (1) For an edition that is *not* in the Library, `access` **follows the price** through a trigger (0 → `free`, more → `paid`, on insert and on every change of `price_cents`), because the Reader's publish dialog says "0 is free" and creates drafts without an access value; a fixed default of `paid` would have made every new $0 edition unreadable. A Library edition is never derived. (2) Only the **service role** may set `access = 'library'`: 112's update policy lets a publisher change any column of their own row, and without the guard a third-party publisher could place their book inside the membership (D15). The mirror script runs with the service role. Harness: `scripts/_verify-reader-membership-126.mjs`.
+
 **Lapse** (D16): when a membership ends — cancelled at period end, or a failed renewal past the grace — `_reader_is_member` turns false and the Reader stops serving Library books and refuses new downloads. `edition_marks` and `edition_progress` are kept, untouched; a member who returns finds every highlight where it was. Nothing is deleted on lapse.
 
 ### Paying — Grapheon's Stripe account (D3), recurring

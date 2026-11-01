@@ -903,6 +903,17 @@ jobs:
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-editions-migration.mjs
 
+      # Migration 126: the Library membership's entitlement (Phase 2S).
+      # Executes 112 then 126 (126 twice, with a Library row in place), then:
+      # access follows price for an ordinary edition and only the service
+      # role sets 'library'; 112's free/paid/refund/withdrawn gate still
+      # holds; the membership matrix (active, cancel-at-period-end, past_due
+      # grace, canceled...); lapse keeps marks; reader_subscriptions is the
+      # webhook's to write.
+      - name: Migration 126 — Grapheon Reader + Library membership (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-reader-membership-126.mjs
+
       # api/editions.mjs: the one door to an edition's files. Offline: a fake
       # Supabase answers Auth, PostgREST and Storage. The bearer is checked
       # first; 112's _edition_can_read is asked AS THE USER and a false is a
