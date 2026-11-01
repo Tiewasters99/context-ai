@@ -90,15 +90,6 @@ function Shell({ children, wide = false }: { children: React.ReactNode; wide?: b
   );
 }
 
-function Wordmark({ small = false }: { small?: boolean }) {
-  return (
-    <div className="flex items-baseline gap-2 select-none">
-      <span style={{ fontFamily: SERIF, fontWeight: 600, fontSize: small ? 22 : 34, letterSpacing: '0.01em' }}>Grapheon</span>
-      <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: small ? 16 : 22, opacity: 0.75 }}>Reader</span>
-    </div>
-  );
-}
-
 const field =
   'w-full rounded-md border border-[#c9b98f] bg-[#fbf6ea] px-3 py-2 text-[15px] outline-none focus:border-[#8a6d2f] placeholder:text-[#a08f6a]';
 const primary =
