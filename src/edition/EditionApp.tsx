@@ -25,8 +25,8 @@ import {
 //          /new         New edition
 //          /read/<id>   the Reader — with the Workshop when the edition is yours
 //
-// No accounts are made here: sign-ups are closed until 15 October (migration
-// 090's reason), and the Reader shares Contextspaces' sign-in.
+// The Reader shares Contextspaces' accounts: the cover signs a reader in with
+// email + password, or makes an account the same way the main app does.
 
 // ---------------------------------------------------------------------------
 // Where we are
@@ -114,42 +114,107 @@ function Trouble({ text }: { text: string | null }) {
 // Sign in
 // ---------------------------------------------------------------------------
 
+const COVER = '/reader-cover-peacock.jpg';
+const COVER_SOFT = '/reader-cover-peacock-blur.jpg';
+
+/**
+ * The cover. The peacock portrait is the whole screen on a phone, with the
+ * wordmark and the form on a parchment sheet rising over her train. On a wide
+ * screen the sharp portrait keeps its own proportions on the left, the softened
+ * copy of the same picture fills the rest so the cover reads as one piece, and
+ * the parchment sheet sits over that softened field.
+ */
 function SignIn() {
+  const [mode, setMode] = useState<'in' | 'new'>('in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [trouble, setTrouble] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setTrouble(null);
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    if (error) setTrouble(error.message);
+    setNote(null);
+    const address = email.trim();
+    if (mode === 'in') {
+      const { error } = await supabase.auth.signInWithPassword({ email: address, password });
+      if (error) setTrouble(error.message);
+    } else {
+      // Same shape as the Contextspaces sign-up (AuthContext.signUpWithEmail): the
+      // profile trigger reads display_name from the metadata and falls back to the
+      // local part of the address. The confirmation link lands back on the Reader
+      // when /reader is among the allowed redirect URLs in Supabase Auth.
+      const { data, error } = await supabase.auth.signUp({
+        email: address,
+        password,
+        options: {
+          data: { display_name: address.split('@')[0] },
+          emailRedirectTo: `${window.location.origin}${BASE || '/reader'}`,
+        },
+      });
+      if (error) setTrouble(error.message);
+      else if (!data.session) {
+        setNote('Check your email and open the confirmation link. Then come back here and sign in with your password.');
+        setMode('in');
+        setPassword('');
+      }
+      // With a session returned (confirmation off) the auth listener signs the reader in.
+    }
     setBusy(false);
   };
 
+  const swap = () => { setMode(mode === 'in' ? 'new' : 'in'); setTrouble(null); setNote(null); };
+
   return (
-    <Shell>
-      <div className="pt-10">
-        <Wordmark />
-        <p className="mt-3 text-[15px] leading-relaxed opacity-80" style={{ fontFamily: SERIF, fontSize: 18 }}>
-          Books whose pages carry the clips and plates their passages call for.
-          Sign in to read what is yours and to make an edition of your own.
-        </p>
-        <form onSubmit={submit} className="mt-8 space-y-3">
-          <input className={field} type="email" autoComplete="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <input className={field} type="password" autoComplete="current-password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <Trouble text={trouble} />
-          <button className={primary} type="submit" disabled={busy || !email || !password}>
-            <BookOpen size={16} /> {busy ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
-        <p className="mt-6 text-[12px] opacity-60">
-          A Contextspaces account is a reader account. New accounts open on 15 October.
-        </p>
+    <div className="relative min-h-full overflow-hidden" style={{ background: '#1f2419', color: '#2b2315' }}>
+      {/* The picture: soft copy underneath (also the wide-screen field), sharp portrait over it. */}
+      <img src={COVER_SOFT} alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" style={{ filter: 'blur(18px) brightness(0.55) saturate(1.1)', transform: 'scale(1.1)' }} />
+      <img
+        src={COVER} alt="A woman robed in peacock feathers, winged, among white roses and blue hydrangeas"
+        onLoad={() => setLoaded(true)}
+        className="absolute inset-y-0 left-0 h-full w-full object-cover transition-opacity duration-700 sm:w-auto sm:max-w-[62vw]"
+        style={{ objectPosition: '50% 12%', opacity: loaded ? 1 : 0 }}
+      />
+      {/* Phone: a dark lead-in so the sheet rises out of the picture rather than cutting it. */}
+      <div className="absolute inset-x-0 bottom-0 h-[55vh] sm:hidden" style={{ background: 'linear-gradient(180deg, rgba(20,22,16,0) 0%, rgba(20,22,16,0.55) 60%, rgba(20,22,16,0.8) 100%)' }} />
+
+      {/* The sheet. */}
+      <div className="relative flex min-h-[100dvh] flex-col justify-end sm:flex-row sm:items-center sm:justify-end sm:px-[6vw]">
+        <div
+          className="w-full rounded-t-3xl px-6 pb-8 pt-7 sm:w-[420px] sm:rounded-2xl sm:px-9 sm:py-10"
+          style={{ background: 'rgba(244,236,216,0.94)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', boxShadow: '0 30px 60px rgba(0,0,0,0.35)' }}
+        >
+          <Wordmark />
+          <p className="mt-3 leading-relaxed opacity-85" style={{ fontFamily: SERIF, fontSize: 18 }}>
+            Your customizable library, built and curated for you by the editors at Grapheon.ai. Sign in to begin exploring.
+          </p>
+          <form onSubmit={submit} className="mt-6 space-y-3">
+            <input className={field} type="email" autoComplete="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input className={field} type="password" autoComplete={mode === 'in' ? 'current-password' : 'new-password'} placeholder={mode === 'in' ? 'Password' : 'Choose a password'} value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Trouble text={trouble} />
+            {note && <p className="rounded-md border border-[#c9b98f] bg-[#fbf6ea] px-3 py-2 text-[13px]">{note}</p>}
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <button className={primary} type="submit" disabled={busy || !email || !password}>
+                <BookOpen size={16} /> {busy ? (mode === 'in' ? 'Signing in…' : 'Creating…') : mode === 'in' ? 'Sign in' : 'Create account'}
+              </button>
+              <button type="button" onClick={swap} className="text-[13px] underline underline-offset-2 opacity-75 hover:opacity-100">
+                {mode === 'in' ? 'Create an account' : 'I have an account'}
+              </button>
+            </div>
+          </form>
+          {mode === 'new' && (
+            <p className="mt-4 text-[12px] leading-relaxed opacity-65">
+              By creating an account you accept the{' '}
+              <a href="https://www.equazia.ai/terms" className="underline underline-offset-2">Terms of Service</a> and the{' '}
+              <a href="https://www.equazia.ai/privacy" className="underline underline-offset-2">Privacy</a> page.
+            </p>
+          )}
+        </div>
       </div>
-    </Shell>
+    </div>
   );
 }
 
@@ -727,8 +792,8 @@ export default function EditionApp() {
   const { session, ready } = useSession();
 
   useEffect(() => {
-    document.title = route.name === 'read' ? 'Grapheon Reader' : 'My Library — Grapheon Reader';
-  }, [route]);
+    document.title = route.name === 'read' || !session ? 'Grapheon Reader' : 'My Library — Grapheon Reader';
+  }, [route, session]);
 
   if (!ready) return <Shell><p className="pt-10 text-[14px] opacity-60">…</p></Shell>;
   if (!session) return <SignIn />;
