@@ -140,13 +140,35 @@ function useWideCover() {
   return wide;
 }
 
-function CoverMark({ wide }: { wide: boolean }) {
+function CoverMark({ wide, scale = 1 }: { wide: boolean; scale?: number }) {
   return (
     <div className="select-none text-center" style={{ fontFamily: SERIF, color: GOLD, lineHeight: 1 }}>
-      <div style={{ fontWeight: 600, fontSize: wide ? 46 : 36, letterSpacing: '0.02em' }}>Grapheon</div>
-      <div style={{ fontStyle: 'italic', fontSize: wide ? 26 : 20, opacity: 0.9, marginTop: 6 }}>Reader</div>
+      <div style={{ fontWeight: 600, fontSize: (wide ? 46 : 36) * scale, letterSpacing: '0.02em' }}>Grapheon</div>
+      <div style={{ fontStyle: 'italic', fontSize: (wide ? 26 : 20) * scale, opacity: 0.9, marginTop: 6 * scale }}>Reader</div>
     </div>
   );
+}
+
+/** On a phone the cover takes whatever height the fields leave, never more:
+ *  the whole page fits the screen from the first paint, with no scrolling.
+ *  Returns the cover's width for that height (capped by the screen width). */
+function useCoverFit(active: boolean): [React.RefObject<HTMLDivElement | null>, number] {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!active || !el) return;
+    const fit = () => {
+      const r = el.getBoundingClientRect();
+      setWidth(Math.max(0, Math.min(r.width, r.height * (513 / 793))));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    window.addEventListener('orientationchange', fit);
+    return () => { ro.disconnect(); window.removeEventListener('orientationchange', fit); };
+  }, [active]);
+  return [ref, width];
 }
 
 /**
@@ -159,6 +181,8 @@ function CoverMark({ wide }: { wide: boolean }) {
  */
 function SignIn() {
   const wide = useWideCover();
+  const [fitRef, coverW] = useCoverFit(!wide);
+  const k = coverW ? Math.min(1.15, Math.max(0.6, coverW / 390)) : 1;
   const [mode, setMode] = useState<'in' | 'new'>('in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -202,7 +226,7 @@ function SignIn() {
   const swap = () => { setMode(mode === 'in' ? 'new' : 'in'); setTrouble(null); setNote(null); };
 
   const line = (
-    <p className="text-center leading-snug" style={{ fontFamily: SERIF, color: 'rgba(233,214,160,0.92)', fontSize: wide ? 17 : 15 }}>
+    <p className="text-center leading-snug" style={{ fontFamily: SERIF, color: 'rgba(233,214,160,0.92)', fontSize: wide ? 17 : 15 * k }}>
       Your customizable library, built and curated for you by the editors at Grapheon.ai. Sign in to begin exploring.
     </p>
   );
@@ -249,16 +273,21 @@ function SignIn() {
     );
   }
 
+  // Phone: one screen, no scrolling. The fields keep their natural height at
+  // the foot; the cover takes the rest, scaled to fit, with the mark and the
+  // line scaled with it.
   return (
-    <div className="min-h-[100dvh]" style={{ background: CLOTH }}>
-      <div className="relative mx-auto w-full max-w-[480px]" style={{ aspectRatio: COVER_ASPECT }}>
-        <img src={COVER} alt={alt} className="absolute inset-0 h-full w-full" />
-        <div className="absolute flex flex-col justify-center gap-3 px-1" style={TITLE_BLOCK}>
-          <CoverMark wide={false} />
-          {line}
+    <div className="flex h-[100dvh] flex-col overflow-hidden" style={{ background: CLOTH }}>
+      <div ref={fitRef} className="relative flex min-h-0 flex-1 items-center justify-center">
+        <div className="relative" style={{ width: coverW ? `${coverW}px` : '100%', maxWidth: '100%', aspectRatio: COVER_ASPECT }}>
+          <img src={COVER} alt={alt} className="absolute inset-0 h-full w-full" />
+          <div className="absolute flex flex-col justify-center px-1" style={{ ...TITLE_BLOCK, gap: 10 * k }}>
+            <CoverMark wide={false} scale={k} />
+            {line}
+          </div>
         </div>
       </div>
-      <div className="mx-auto w-full max-w-[480px] px-5 pb-10 pt-4">{form}</div>
+      <div className="mx-auto w-full max-w-[480px] px-5 pt-3" style={{ paddingBottom: 'max(20px, env(safe-area-inset-bottom))' }}>{form}</div>
     </div>
   );
 }
