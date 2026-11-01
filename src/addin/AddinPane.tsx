@@ -187,6 +187,8 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [lease, setLease] = useState<{ holder: string; since: string } | null>(null);
+  /** The brief this document names could not be opened: why, in words. */
+  const [briefLost, setBriefLost] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [initials, setInitials] = useState(() => rememberedInitials() ?? '');
   const [mockFile, setMockFile] = useState<string | null>(null);
@@ -196,6 +198,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
 
   // A brief this document already names: its last run and its log.
   useEffect(() => {
+    setBriefLost(null);
     if (!briefId) { setMeta(null); setRun(null); setReadings([]); setPlain(''); return; }
     let live = true;
     void (async () => {
@@ -210,11 +213,11 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
         if (m.matterspace_id && !matterId) setMatterId(m.matterspace_id);
       } catch (e) {
         if (!live) return;
-        // Someone this matter is not shared with opened a shared .docx, or the brief is gone.
+        // Someone this matter is not shared with opened a shared .docx, the
+        // brief is gone, or the network blinked. The document keeps its brief
+        // id either way: detaching is the person's choice, below.
         setMeta(null);
-        setError(`This document names a brief in Equazia that cannot be opened from this account (${(e as Error).message}). Confirm will file a new brief in the matter you choose.`);
-        setBriefId(null);
-        void bridge.setSetting(SETTING_BRIEF, null);
+        setBriefLost((e as Error).message);
       }
     })();
     return () => { live = false; };
@@ -245,6 +248,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
 
   const confirm = useCallback(async (opts: { all: boolean; force?: boolean }) => {
     if (!matterId) { setError('Choose the matter this brief draws on first.'); return; }
+    if (briefLost) { setError('Open the brief this document names first (Try again), or file it as a new brief.'); return; }
     setError(null); setNotice(null); setLease(null); setBusy(true);
     const ac = new AbortController();
     abortRef.current = ac;
@@ -311,7 +315,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
       setProgress(null);
       abortRef.current = null;
     }
-  }, [bridge, briefId, matterId, claimHold]);
+  }, [bridge, briefId, matterId, claimHold, briefLost]);
 
   const rows: Row[] = useMemo(() => {
     if (!run) return [];
@@ -416,6 +420,17 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
             <Stamp size={12} className="text-white/35 shrink-0" />
             <span className="truncate">In Equazia as <span className="text-white/85">{meta.title}</span></span>
             <button onClick={() => bridge.openUrl(`${origin}/app/brief/${meta.id}`)} title="Open in Equazia" className="ml-auto text-white/45 hover:text-white shrink-0"><ExternalLink size={12} /></button>
+          </div>
+        )}
+
+        {briefLost && (
+          <div className="rounded-md border border-amber-400/30 bg-amber-400/10 p-2 text-[11.5px] text-amber-100">
+            <AlertTriangle size={12} className="inline mr-1 -mt-0.5" />
+            This document names a brief in Equazia that could not be opened from this account ({briefLost}). Try again, or file the document as a new brief in the matter above.
+            <div className="mt-1.5 flex gap-2">
+              <button onClick={() => { const id = briefId; setBriefId(null); setTimeout(() => setBriefId(id), 0); }} className="rounded border border-amber-300/40 px-2 py-0.5 text-[11px]">Try again</button>
+              <button onClick={() => { setBriefId(null); void bridge.setSetting(SETTING_BRIEF, null); }} className="text-[11px] text-amber-100/70 hover:text-white">File as a new brief</button>
+            </div>
           </div>
         )}
 
