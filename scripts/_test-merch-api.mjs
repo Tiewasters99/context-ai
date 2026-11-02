@@ -100,7 +100,7 @@ function makeStore() {
   };
 }
 
-function fakeWorld({ printifyImages = [], failOrder = false } = {}) {
+function fakeWorld({ printifyImages = [], failOrder = false, spotlightFiles = [] } = {}) {
   const calls = [];
   const store = makeStore();
   let printifyOrders = 0;
@@ -116,6 +116,11 @@ function fakeWorld({ printifyImages = [], failOrder = false } = {}) {
     const isService = auth === 'Bearer service-key' && apikey === 'service-key';
 
     if (u.host === 'example.supabase.co') {
+      // The editors' spotlight pictures, public: a HEAD says whether one is on the shelf.
+      if (u.pathname.startsWith('/storage/v1/object/public/cover-images/spotlight/')) {
+        const rel = u.pathname.split('/').slice(-2).join('/');
+        return new Response(null, { status: spotlightFiles.includes(rel) ? 200 : 404 });
+      }
       if (u.pathname === '/auth/v1/user') {
         const id = TOKENS[auth.replace(/^Bearer /, '')];
         return id ? respond(200, { id, email: `${id.slice(0, 4)}@example.test` }) : respond(401, { message: 'bad token' });
@@ -160,7 +165,7 @@ function fakeWorld({ printifyImages = [], failOrder = false } = {}) {
         return respond(200, it && it.edition_id === eq('edition_id') ? [it] : []);
       }
       if (table === 'editions') {
-        if (!asUser()) return respond(401, {});
+        if (!asUser() && !isService) return respond(401, {});
         const eds = { [EDITION_PD]: { id: EDITION_PD, title: 'Innocents Abroad', rights: 'public_domain', merch_allowed: false }, [EDITION_OWN]: { id: EDITION_OWN, title: 'My Illustrated Novel', rights: 'own', merch_allowed: false } };
         return respond(200, eds[eq('id')] ? [eds[eq('id')]] : []);
       }
@@ -345,6 +350,27 @@ test('make: a Library plate goes up by file_url, the product is made at the blue
   assert.equal(m.json().product.mockups[0].src, 'https://images.printify.com/mock-1');
   const m2 = await post(w, 'tok-other', { action: 'mockups', product_id: p.id });
   assert.equal(m2.statusCode, 404);
+});
+
+test('make from a spotlight: the editors’ picture under cover-images/spotlight is the attestation; a missing picture or an in-copyright work is refused before Printify is asked; the row is an edition product with no bench item', async () => {
+  const w = fakeWorld({ spotlightFiles: ['aziyade/plate-1.jpg'] });
+  const missing = await post(w, 'tok-reader', { action: 'make', blueprint_key: 'tee', image_url: MY_IMAGE, source: { kind: 'spotlight', id: EDITION_PD, slug: 'aziyade', file: 'plate-2.jpg' } });
+  assert.equal(missing.statusCode, 404);
+  const own = await post(w, 'tok-reader', { action: 'make', blueprint_key: 'tee', image_url: MY_IMAGE, source: { kind: 'spotlight', id: EDITION_OWN, slug: 'aziyade', file: 'plate-1.jpg' } });
+  assert.equal(own.statusCode, 403);
+  const badSlug = await post(w, 'tok-reader', { action: 'make', blueprint_key: 'tee', image_url: MY_IMAGE, source: { kind: 'spotlight', id: EDITION_PD, slug: '../x', file: 'plate-1.jpg' } });
+  assert.equal(badSlug.statusCode, 400);
+  assert.equal(w.printify().length, 0, 'Printify was never asked');
+  assert.equal(w.store.tables.merch_products.length, 0, 'no row was written');
+
+  const made = await post(w, 'tok-reader', { action: 'make', blueprint_key: 'tee', image_url: MY_IMAGE, source: { kind: 'spotlight', id: EDITION_PD, slug: 'aziyade', file: 'plate-1.jpg' } });
+  assert.equal(made.statusCode, 200, JSON.stringify(made.json()));
+  const row = w.store.tables.merch_products[0];
+  assert.equal(row.source_kind, 'edition');
+  assert.equal(row.source_id, EDITION_PD);
+  assert.equal(row.bench_item_id ?? null, null);
+  assert.match(row.title, /^Innocents Abroad/);
+  assert.ok(w.calls.some((c) => c.method === 'HEAD' && c.path.endsWith('/spotlight/aziyade/plate-1.jpg')), 'the picture was looked for on the shelf');
 });
 
 test('without the Printify token, make is a 503 and nothing is written', async () => {

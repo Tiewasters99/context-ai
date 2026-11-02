@@ -223,6 +223,32 @@ async function rightsFor(bearer, user, source, doFetch) {
   const kind = source?.kind;
   const id = String(source?.id ?? '');
   const benchId = String(source?.bench_item_id ?? '');
+
+  // A spotlight picture: set out by the editors under cover-images/spotlight/
+  // (only the service role can write there — the bucket lets a user write
+  // under their own uid alone), for a public-domain edition. Its presence
+  // there is the editors' attestation; no bench item is involved. The row is
+  // written as an edition product with no bench item.
+  if (kind === 'spotlight') {
+    const slug = String(source?.slug ?? '');
+    const file = String(source?.file ?? '');
+    if (!UUID_RE.test(id) || !/^[a-z0-9-]{3,60}$/.test(slug) || !/^[A-Za-z0-9._-]{1,120}$/.test(file) || file.includes('..')) {
+      return { ok: false, status: 400, error: 'bad_request', message: 'The spotlight needs its edition, its slug and its picture.' };
+    }
+    const ed = await serviceSelect('editions', `id=eq.${id}&select=id,title,rights`, doFetch);
+    if (!ed.ok) return { ok: false, status: 503, error: 'storage_unavailable', message: 'The edition could not be checked.' };
+    const e = ed.rows[0];
+    if (!e) return { ok: false, status: 404, error: 'not_found', message: 'The spotlighted edition could not be found.' };
+    if (e.rights !== 'public_domain') {
+      return { ok: false, status: 403, error: 'not_allowed', message: 'Only a public-domain work’s pictures go on merchandise from a spotlight.' };
+    }
+    const url = `${base()}/storage/v1/object/public/${PRINTS_BUCKET}/spotlight/${slug}/${file}`;
+    let head = null;
+    try { head = await doFetch(url, { method: 'HEAD' }); } catch { head = null; }
+    if (!head || !head.ok) return { ok: false, status: 404, error: 'not_found', message: 'That spotlight picture is not on the shelf.' };
+    return { ok: true, title: e.title || 'Grapheon' };
+  }
+
   if (!UUID_RE.test(id) || !UUID_RE.test(benchId)) {
     return { ok: false, status: 400, error: 'bad_request', message: 'The source needs an id and a bench item.' };
   }
@@ -275,7 +301,7 @@ async function rightsFor(bearer, user, source, doFetch) {
     return { ok: true, title: e.title || 'Grapheon' };
   }
 
-  return { ok: false, status: 400, error: 'bad_request', message: 'The source must be a document or an edition.' };
+  return { ok: false, status: 400, error: 'bad_request', message: 'The source must be a document, an edition or a spotlight.' };
 }
 
 /* ───────────────────────── Handler ───────────────────────── */
@@ -356,9 +382,11 @@ async function make(req, res, { bearer, user, body, ctx, doFetch }) {
   // The row first, so a failure part-way leaves a record the owner can see.
   const made = await serviceWrite('POST', 'merch_products', '', {
     owner_user_id: user.id,
-    source_kind: body.source.kind,
+    // A spotlight is an edition product with no bench item (merch_products
+    // knows document and edition only).
+    source_kind: body.source.kind === 'spotlight' ? 'edition' : body.source.kind,
     source_id: body.source.id,
-    bench_item_id: body.source.bench_item_id,
+    bench_item_id: body.source.bench_item_id ?? null,
     blueprint_key: key,
     title,
     image_url: imageUrl,

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search } from 'lucide-react';
+import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search, Shirt } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import MerchSheet, { type MerchSheetOpen } from '@/components/reader/MerchSheet';
+import { readMerchReturn, stripMerchReturn } from '@/lib/merch-sheet';
 import PdfBook, { type PdfSource, type MarksStore, type BenchStore } from '@/components/reader/PdfBook';
 import { renderPageCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import type { MoreItem } from '@/components/reader/reader-chrome';
@@ -593,18 +595,64 @@ function Library({ session, navigate }: { session: Session; navigate: (to: strin
 // ---------------------------------------------------------------------------
 
 /** Eden picks the work and supplies the pictures and the film; until then the
- *  page stands at /how, unlinked, with the frame in place. */
-const SPOTLIGHT: { work: string | null; author: string | null; editionId: string | null; images: string[]; video: string | null; copy: string[] } = {
+ *  page stands at /how, unlinked, with the frame in place. The pictures live
+ *  in the public bucket under cover-images/spotlight/<slug>/ (set out by the
+ *  editors with the service role), so each can go on a tee, a tote or a print
+ *  through the same sheet readers use in a book. */
+const SPOTLIGHT: {
+  work: string | null;
+  author: string | null;
+  /** The edition the spotlight is about: its rights (public domain) back the merch. */
+  editionId: string | null;
+  /** The folder under cover-images/spotlight/. */
+  slug: string | null;
+  images: Array<{ file: string; caption?: string }>;
+  video: string | null;
+  copy: string[];
+} = {
   work: null,
   author: null,
   editionId: null,
+  slug: null,
   images: [],
   video: null,
   copy: [],
 };
 
+function spotlightImageUrl(slug: string, file: string): string {
+  return supabase.storage.from('cover-images').getPublicUrl(`spotlight/${slug}/${file}`).data.publicUrl;
+}
+
 function Spotlight({ session, navigate }: { session: Session; navigate: (to: string) => void }) {
   const s = SPOTLIGHT;
+  const [sheet, setSheet] = useState<MerchSheetOpen | null>(null);
+  const merchReady = !!(s.editionId && s.slug);
+
+  // Back from Stripe: ?merch=paid&order=<id> opens the orders view; ?merch=cancel says so.
+  useEffect(() => {
+    const back = readMerchReturn(window.location.search);
+    if (!back) return;
+    window.history.replaceState(null, '', `${window.location.pathname}${stripMerchReturn(window.location.search)}${window.location.hash}`);
+    setSheet(back.kind === 'paid'
+      ? { kind: 'orders', orderId: back.orderId }
+      : { kind: 'orders', orderId: null, notice: 'Checkout was cancelled. Nothing was charged.' });
+  }, []);
+
+  const putOnMerch = (file: string) => {
+    if (!s.editionId || !s.slug) return;
+    const url = spotlightImageUrl(s.slug, file);
+    const stem = file.replace(/\.[A-Za-z0-9]+$/, '').replace(/[^A-Za-z0-9._-]/g, '-');
+    setSheet({
+      kind: 'product',
+      itemId: `spotlight-${s.slug}-${stem}`,
+      itemUpdatedAt: null,
+      source: { kind: 'spotlight', id: s.editionId, slug: s.slug, file },
+      preview: url,
+      getBlob: async () => { const r = await fetch(url); if (!r.ok) throw new Error('The picture could not be fetched.'); return r.blob(); },
+      bookTitle: s.work,
+    });
+  };
+
   return (
     <ClothPage session={session} navigate={navigate}>
       <GiltRule className="mt-7" />
@@ -620,9 +668,19 @@ function Spotlight({ session, navigate }: { session: Session; navigate: (to: str
             <video src={s.video} controls playsInline className="block w-full" />
           </div>
         )}
-        {s.images.length > 0 && (
-          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
-            {s.images.map((src) => <img key={src} src={src} alt="" className="w-full rounded-sm" style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }} />)}
+        {s.slug && s.images.length > 0 && (
+          <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
+            {s.images.map((im) => (
+              <figure key={im.file}>
+                <img src={spotlightImageUrl(s.slug!, im.file)} alt={im.caption ?? ''} className="w-full rounded-sm" style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }} />
+                {im.caption && <figcaption className="mt-2 text-[13px]" style={{ fontFamily: SERIF, fontStyle: 'italic', color: 'rgba(233,214,160,0.75)' }}>{im.caption}</figcaption>}
+                {merchReady && (
+                  <button className={`${goldQuiet} mt-2`} style={goldQuietStyle} onClick={() => putOnMerch(im.file)}>
+                    <Shirt size={14} /> On a tee, a tote or a print
+                  </button>
+                )}
+              </figure>
+            ))}
           </div>
         )}
         <div className="mt-8 space-y-5" style={{ fontFamily: SERIF, fontSize: 19, lineHeight: 1.55, color: 'rgba(241,227,184,0.94)' }}>
@@ -630,11 +688,25 @@ function Spotlight({ session, navigate }: { session: Session; navigate: (to: str
             <p style={{ color: 'rgba(233,214,160,0.6)' }}>The work, its pictures and its film are chosen by the editors and will appear here.</p>
           )}
         </div>
-        {s.editionId && (
-          <button className={`${goldPrimary} mt-8`} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate(`/read/${s.editionId}`)}><BookOpen size={16} /> Open the edition</button>
-        )}
+        <div className="mt-8 flex flex-wrap gap-3">
+          {s.editionId && (
+            <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate(`/read/${s.editionId}`)}><BookOpen size={16} /> Open the edition</button>
+          )}
+          {merchReady && (
+            <button className={goldQuiet} style={goldQuietStyle} onClick={() => setSheet({ kind: 'orders', orderId: null })}>My orders</button>
+          )}
+        </div>
       </div>
       <GiltRule />
+      {sheet && (
+        <MerchSheet
+          key={sheet.kind === 'product' ? sheet.itemId : 'orders'}
+          open={sheet}
+          userId={session.user.id}
+          returnPath={`${BASE}/how`}
+          onClose={() => setSheet(null)}
+        />
+      )}
     </ClothPage>
   );
 }

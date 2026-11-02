@@ -95,7 +95,10 @@ export type MerchOrder = {
 };
 
 /** Where a bench item came from, as api/merch's rights gate wants it. */
-export type MerchSource = { kind: 'document' | 'edition'; id: string; bench_item_id: string };
+export type MerchSource =
+  | { kind: 'document' | 'edition'; id: string; bench_item_id: string }
+  /** A picture the editors set out under cover-images/spotlight/<slug>/ for a public-domain edition. */
+  | { kind: 'spotlight'; id: string; slug: string; file: string };
 
 export type MerchApi = <T = Record<string, unknown>>(action: string, args?: Record<string, unknown>) => Promise<T>;
 
@@ -126,11 +129,14 @@ function refusalSentence(status: number, code?: string): string {
  * (RLS: the owner only). The sheet reuses one made since the item last
  * changed, so reopening the sheet neither uploads nor makes again.
  */
-export async function myMerchProducts(benchItemId: string): Promise<MerchProduct[]> {
-  const { data, error } = await supabase
+export async function myMerchProducts(itemId: string): Promise<MerchProduct[]> {
+  // A bench item is keyed by its id; a spotlight picture (no bench item) by
+  // the print the sheet set out for it, whose name begins with the item id.
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(itemId);
+  const q = supabase
     .from('merch_products')
-    .select('id, blueprint_key, title, image_url, options, variants, mockups, placement, status, error, created_at')
-    .eq('bench_item_id', benchItemId)
+    .select('id, blueprint_key, title, image_url, options, variants, mockups, placement, status, error, created_at');
+  const { data, error } = await (isUuid ? q.eq('bench_item_id', itemId) : q.like('image_url', `%/prints/${itemId}-%`))
     .order('created_at', { ascending: false });
   if (error) return [];
   return (data ?? []) as MerchProduct[];
