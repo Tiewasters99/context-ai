@@ -20,7 +20,7 @@
   <ProviderName>Equazia.ai, Inc.</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Equazia" />
-  <Description DefaultValue="Confirm this brief: every citation checked against the matter and opened at the pinned page, from inside Word." />
+  <Description DefaultValue="Equazia inside Word: save the document to its matter as a version, and confirm every citation against the matter." />
   <IconUrl DefaultValue="https://www.equazia.ai/addin/icon-32.png" />
   <HighResolutionIconUrl DefaultValue="https://www.equazia.ai/addin/icon-80.png" />
   <SupportUrl DefaultValue="https://www.equazia.ai" />
@@ -94,12 +94,12 @@
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Group.Label" DefaultValue="Equazia" />
-        <bt:String id="Confirm.Label" DefaultValue="Confirm this brief" />
+        <bt:String id="Confirm.Label" DefaultValue="Equazia" />
         <bt:String id="GetStarted.Title" DefaultValue="Equazia is ready" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="Confirm.Tip" DefaultValue="Check every citation in this document against the matter in Equazia and open each authority at the pinned page." />
-        <bt:String id="GetStarted.Description" DefaultValue="On the Home tab, press Confirm this brief. Sign in to Equazia, choose the matter the brief draws on, and run the check." />
+        <bt:String id="Confirm.Tip" DefaultValue="Open the Equazia pane: Save to Equazia stores this document in its matter as a version; Confirm this brief checks every citation against the matter." />
+        <bt:String id="GetStarted.Description" DefaultValue="On the Home tab, press Equazia. Sign in, choose the matter, Save to Equazia, and Confirm this brief when you are ready." />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

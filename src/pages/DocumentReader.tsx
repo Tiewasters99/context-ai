@@ -35,7 +35,9 @@ import { supabase } from '@/lib/supabase';
 import { LIBRARY_SERVERSPACE, findOrCreateLibrarySection, publishDocumentToOffice, captureJacket } from '@/lib/office-publish';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
-import { hasDraftBody } from '@/lib/brief/draft-store';
+import { opensOnDesk } from '@/lib/brief/draft-store';
+import { openInWord, isWordFile } from '@/lib/open-in-word';
+import VersionsMenu from '@/components/reader/VersionsMenu';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import { storageObjectBlob, downloadDocumentFile, isStepUpRequired } from '@/lib/vault-object';
 import { isVideoFilename } from '@/lib/video-discovery';
@@ -158,6 +160,8 @@ type DocMeta = {
   source_document_id?: string | null;
   /** 'brief' offers "Edit in the Brief Desk". */
   doc_type?: string | null;
+  /** 'word' when Word is the editor (WORD-ROUNDTRIP): the .docx is the document. */
+  editor?: string | null;
 };
 
 type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'text' | 'image' | 'unsupported';
@@ -441,7 +445,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   useEffect(() => {
     if (propId !== undefined || embedded || !id || searchParams.get('reader') === '1') return;
     let live = true;
-    void hasDraftBody(id).then((yes) => {
+    void opensOnDesk(id).then((yes) => {
       if (live && yes) navigate(`/app/brief/${id}`, { replace: true });
     });
     return () => { live = false; };
@@ -459,7 +463,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   // row that reads as nothing at aal1 (098: document_entry says why). The
   // prompt is drawn in the reading pane; confirming re-runs whatever was
   // refused.
-  const [stepUp, setStepUp] = useState<{ mode: 'stepup' | 'enrol'; matterId: string | null; retry: 'load' | 'download' } | null>(null);
+  const [stepUp, setStepUp] = useState<{ mode: 'stepup' | 'enrol'; matterId: string | null; retry: 'load' | 'download' | 'word' } | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [fileKind, setFileKind] = useState<FileKind>('pdf');
   const [docHtml, setDocHtml] = useState<string | null>(null);
@@ -605,7 +609,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     void (async () => {
       const { data, error } = await supabase
         .from('documents')
-        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, file_size_bytes, doc_type, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id, image_description:metadata->image_description')
+        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, file_size_bytes, doc_type, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id, image_description:metadata->image_description, editor:metadata->>editor')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -1417,6 +1421,25 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       setDownloading(false);
     }
   }, [doc, fileKind, downloading]);
+  // Open in Word (docs/specs/WORD-ROUNDTRIP-2026-11-01.md): the file leaves
+  // through the Download door, tagged, and Word opens it from Downloads.
+  const [openingWord, setOpeningWord] = useState(false);
+  const handleOpenInWord = useCallback(async () => {
+    if (!doc?.storage_path || openingWord) return;
+    setOpeningWord(true);
+    try {
+      await openInWord({ id: doc.id, matterspace_id: doc.matterspace_id ?? null, source_filename: doc.source_filename, title: doc.title });
+      setCopyNote(null);
+    } catch (e) {
+      if (isStepUpRequired(e)) {
+        setStepUp({ mode: e.mode, matterId: e.matterId ?? doc.matterspace_id ?? null, retry: 'word' });
+      } else {
+        setErrorMsg(e instanceof Error ? e.message : 'The file could not be opened in Word.');
+      }
+    } finally {
+      setOpeningWord(false);
+    }
+  }, [doc, openingWord]);
 
   // ── The book's three doors (src/components/reader/PdfBook.tsx) ─────
   // The matter's data, handed to the book through the three interfaces it
@@ -2467,6 +2490,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       >
         <Printer size={15} />
       </button>
+      {doc && isWordFile(doc.source_filename ?? doc.storage_path) && (
+        <button
+          onClick={() => void handleOpenInWord()}
+          disabled={openingWord || !doc.storage_path}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-[12px] text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Open in Word — the file opens in Word on this computer; Save to Equazia in the Equazia pane there puts your edits back here as a new version"
+        >
+          {openingWord ? <Loader2 size={14} className="animate-spin" /> : <PenLine size={14} />} <span className="hidden md:inline">Open in Word</span>
+        </button>
+      )}
+      {doc && (doc.editor === 'word' || isWordFile(doc.source_filename ?? doc.storage_path)) && (
+        <VersionsMenu documentId={doc.id} currentPath={doc.storage_path} onNote={(text, tone) => { if (tone === 'error') setErrorMsg(text); else setCopyNote(text); }} />
+      )}
       <button
         onClick={handleDownload}
         disabled={downloading || !doc?.storage_path}
@@ -2503,6 +2539,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     ] : []),
     { icon: <FileText size={14} />, label: fileKind === 'image' ? 'Copy the picture' : 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl) },
     { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: () => void handlePrint(), disabled: printing || loadState !== 'ready' },
+    ...(doc && isWordFile(doc.source_filename ?? doc.storage_path) ? [
+      { icon: <PenLine size={14} />, label: 'Open in Word', run: () => void handleOpenInWord(), disabled: openingWord || !doc.storage_path },
+    ] : []),
     { icon: <Download size={14} />, label: 'Download the original', run: () => void handleDownload(), disabled: downloading || !doc?.storage_path },
     ...(connectedDrives.length
       ? connectedDrives.map((kind) => ({
@@ -2784,6 +2823,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     const retry = stepUp.retry;
                     setStepUp(null);
                     if (retry === 'load') setReloadKey((k) => k + 1);
+                    else if (retry === 'word') void handleOpenInWord();
                     else void handleDownload();
                   }}
                 />
@@ -3006,6 +3046,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     const retry = stepUp.retry;
                     setStepUp(null);
                     if (retry === 'load') setReloadKey((k) => k + 1);
+                    else if (retry === 'word') void handleOpenInWord();
                     else void handleDownload();
                   }}
                 />

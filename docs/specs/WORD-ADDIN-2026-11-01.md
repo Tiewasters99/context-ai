@@ -1,5 +1,11 @@
 # Equazia for Word — Office Add-in spec (2026-11-01)
 
+> **Superseded in part, same day:** the document is no longer filed as a Desk
+> brief by the first Confirm. The .docx itself is the document in the matter,
+> saved as versions from the pane; see **WORD-ROUNDTRIP-2026-11-01.md**. The
+> pane, sign-in, cite table, select-in-Word, Confirm/Problem and the opt-in
+> comment below are unchanged.
+
 ## Why
 
 Legora's small-firm pitch leans on working inside Word. Our Brief Desk already

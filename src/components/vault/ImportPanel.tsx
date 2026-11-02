@@ -12,6 +12,7 @@ import { isVaultDrag, readVaultDrag, writeVaultDrag, type VaultDragItem } from '
 import ContextMenu, { type ContextMenuState } from '@/components/ui/ContextMenu';
 import CoverThumb from '@/components/ui/CoverThumb';
 import { clearVaultClip, pasteVaultClip, setVaultClip, useVaultClip, type ClipMode } from '@/lib/vault-clipboard';
+import { openInWord, isWordFile } from '@/lib/open-in-word';
 import {
   buildVaultGroups,
   shareRenderBudget,
@@ -550,6 +551,15 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       x: e.clientX, y: e.clientY, items: [
         { label: `Cut${n}`, hint: 'Ctrl+X', onSelect: () => putOnClip('cut', ids) },
         { label: `Copy${n}`, hint: 'Ctrl+C', onSelect: () => putOnClip('copy', ids) },
+        // A Word file opens in Word, tagged so the Equazia pane there knows it
+        // (docs/specs/WORD-ROUNDTRIP-2026-11-01.md).
+        ...(ids.length === 1 && isWordFile(file.name) ? [{
+          label: 'Open in Word',
+          onSelect: () => {
+            void openInWord({ id: file.id, matterspace_id: file.matterspace_id ?? null, source_filename: file.name, title: file.name })
+              .catch((e: unknown) => report({ ok: false, text: e instanceof Error ? e.message : 'The file could not be opened in Word.' }));
+          },
+        }] : []),
       ],
     });
   };
@@ -797,7 +807,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
           className="text-[10px] text-white/50"
           title={file.status === 'indexed' ? (file.ocrPending ? describeOcrPending(file.ocrPending)?.detail : file.textStatus ? describeTextStatus(file.textStatus).detail : undefined) : undefined}
         >
-          {file.size} · {file.type.toUpperCase()} · {statusLabel(file)}
+          {file.size} · {file.type.toUpperCase()}{file.versionLabel ? ` · ${file.versionLabel}` : ''} · {statusLabel(file)}
           {file.textContent && file.status === 'indexed' && (
             <span className="text-white/30 ml-1">· {Math.round(file.textContent.length / 4)} tokens</span>
           )}

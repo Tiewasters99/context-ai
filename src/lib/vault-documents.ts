@@ -39,6 +39,8 @@ export const VAULT_DOCUMENT_COLUMNS =
   // plan, 2026-09-26): "Luthiers workshop dusk snow falling". Null on
   // everything else, and on pictures described before the feature.
   'image_label:metadata->image_description->>label, ' +
+  // The latest version's label when Word is the editor (WORD-ROUNDTRIP).
+  'version_label:metadata->>version_label, ' +
   // The cover chosen for the document (migration 028), drawn small beside
   // the title in the list — the Library's books wear their jackets.
   'cover_url';
@@ -112,6 +114,8 @@ export interface VaultDocumentRow {
   ocr_pending?: unknown;
   /** Migration 028: the cover chosen for the document, or null. */
   cover_url?: string | null;
+  /** metadata->>version_label: the latest version saved from Word. */
+  version_label?: string | null;
   /** Migration 081, and only on an A–Z or Category read. */
   sort_key?: string | null;
   category?: string | null;

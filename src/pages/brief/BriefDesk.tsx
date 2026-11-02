@@ -207,7 +207,7 @@ export default function BriefDesk() {
       // Editable unless another window holds it. While the first claim is in
       // flight it stays editable, so the on-open steps (laying the last run's
       // marks) run as before; a second window turns read-only a moment later.
-      editable={!isMobile && lease.kind !== 'theirs'}
+      editable={!isMobile && lease.kind !== 'theirs' && (meta.metadata ?? {}).editor !== 'word'}
       lease={lease}
       onTakeOver={async () => {
         // Start from what the other window last saved, never a stale copy.
@@ -1998,7 +1998,9 @@ function DeskEditor(p: DeskProps) {
       {p.lease.kind === 'theirs' ? (
         <LeaseBanner lease={p.lease} onTakeOver={p.onTakeOver} saveAsLabel={nextVersionLabel(meta.title ?? '')} />
       ) : !p.editable && p.lease.kind !== 'checking' && (
-        <Banner tone="info">Read-only on a phone. Open the brief on a laptop to edit it.</Banner>
+        (meta.metadata ?? {}).editor === 'word'
+          ? <Banner tone="info">This document is written in Word. The Desk shows its words as last saved from Word; to change them, Open in Word from the Reader and Save to Equazia.</Banner>
+          : <Banner tone="info">Read-only on a phone. Open the brief on a laptop to edit it.</Banner>
       )}
       {(p.notice || p.busy) && (
         <Banner tone="info" onClose={p.busy ? undefined : () => p.setNotice(null)}>

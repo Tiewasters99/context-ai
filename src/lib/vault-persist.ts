@@ -220,6 +220,7 @@ function documentToVaultFile(doc: {
   matterspace_id?: string;
   storage_path?: string | null;
   text_status?: string | null;
+  version_label?: string | null;
   /** metadata->image_description->>label: a described picture's tile label. */
   image_label?: string | null;
   /** metadata->ocr_pending arrives typed as Json; narrowed below. */
@@ -253,6 +254,7 @@ function documentToVaultFile(doc: {
     textStatus: doc.processing_status === 'ready' ? (doc.text_status ?? undefined) : undefined,
     imageLabel: doc.processing_status === 'ready' ? (doc.image_label ?? undefined) : undefined,
     coverUrl: doc.cover_url ?? undefined,
+    versionLabel: doc.version_label ?? undefined,
     ocrPending: doc.processing_status === 'ready' && doc.ocr_pending && typeof doc.ocr_pending === 'object'
       ? (doc.ocr_pending as OcrPending) : undefined,
     sortKey: doc.sort_key ?? undefined,
