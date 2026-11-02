@@ -940,7 +940,7 @@ function LibraryPicker({ chosen, onChoose }: { chosen: LibraryBook | null; onCho
         {books === null ? (
           <p className="px-3 py-3 text-[13px] opacity-60">{q ? `Looking for "${q}"…` : 'Looking on the shelves…'}</p>
         ) : books.length === 0 ? (
-          <p className="px-3 py-3 text-[13px] opacity-60">{q ? 'No PDF by that title.' : 'No PDFs in your Contextspaces yet.'}</p>
+          <p className="px-3 py-3 text-[13px] opacity-60">{q ? 'No PDF by that title.' : 'No PDFs in Equazia yet.'}</p>
         ) : books.map((b) => (
           <button
             key={b.id}
@@ -994,7 +994,7 @@ function NewEdition({ navigate }: { navigate: (to: string) => void }) {
       setBusy('Making the edition…');
       edition = await createEdition({ title, author: author || null });
       if (door === 'library' && book) {
-        setBusy('Copying the book from Contextspaces…');
+        setBusy('Copying the book from Equazia…');
         await copyBookFromDocument(edition, book.id);
       } else if (file) {
         setBusy('Uploading the book…');
@@ -1018,15 +1018,14 @@ function NewEdition({ navigate }: { navigate: (to: string) => void }) {
       <button className="inline-flex items-center gap-1 text-[13px] opacity-70 hover:opacity-100" onClick={() => navigate('/')}>
         ← My Library
       </button>
-      <h2 className="mt-4" style={{ fontFamily: SERIF, fontSize: 30, fontWeight: 600 }}>New edition</h2>
-      <p className="mt-1 text-[14px] opacity-70">
+      <p className="mt-4 text-[14px] opacity-70">
         A PDF — a facsimile of a public-domain book, or a book of your own. The Workshop opens beside it.
       </p>
 
       <form onSubmit={make} className="mt-6 space-y-4">
         <div className="flex gap-2">
           <button type="button" onClick={() => setDoor('library')} className={`${quiet} flex-1 justify-center ${door === 'library' ? 'bg-[#f1e6c9] border-[#8a6d2f]' : ''}`}>
-            <LibraryIcon size={14} /> From my Contextspaces
+            <LibraryIcon size={14} /> From Equazia
           </button>
           <button type="button" onClick={() => setDoor('upload')} className={`${quiet} flex-1 justify-center ${door === 'upload' ? 'bg-[#f1e6c9] border-[#8a6d2f]' : ''}`}>
             <Upload size={14} /> Upload a PDF
@@ -1067,11 +1066,9 @@ function NewEdition({ navigate }: { navigate: (to: string) => void }) {
         <button className={primary} type="submit" disabled={!ready || !title.trim() || !!busy}>
           <ChevronRight size={15} /> Open in the Reader
         </button>
-        {!busy && (!ready || !title.trim()) && (
+        {!busy && (door === 'upload' || ready) && (!ready || !title.trim()) && (
           <p className="text-[12px] opacity-60">
-            {!ready
-              ? (door === 'library' ? 'Pick a book from the list first.' : 'Choose the PDF first: tap the box above and pick it from your files.')
-              : 'Give it a title.'}
+            {!ready ? 'Choose the PDF first: tap the box above and pick it from your files.' : 'Give it a title.'}
           </p>
         )}
       </form>
