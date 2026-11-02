@@ -39,6 +39,9 @@ export type Edition = {
   status: EditionStatus;
   rights: EditionRights | null;
   rights_note: string | null;
+  access: 'free' | 'paid' | 'library';
+  collection_key: string | null;
+  volume: number | null;
   version: number;
   published_at: string | null;
   created_at: string;
@@ -58,7 +61,7 @@ export type EditionAsset = {
 };
 
 const EDITION_SELECT =
-  'id, slug, title, author, description, cover_path, publisher_user_id, price_cents, currency, status, rights, rights_note, version, published_at, created_at, updated_at';
+  'id, slug, title, author, description, cover_path, publisher_user_id, price_cents, currency, status, rights, rights_note, access, collection_key, volume, version, published_at, created_at, updated_at';
 
 export const BUCKET = 'editions';
 
@@ -140,6 +143,17 @@ export async function listMyEditions(): Promise<Edition[]> {
     .select(EDITION_SELECT)
     .eq('publisher_user_id', uid)
     .order('updated_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Edition[];
+}
+
+/** Every edition this reader may see: the row policies decide (published, mine,
+ *  owned, and Library books once published and the reader is a member). */
+export async function listVisibleEditions(): Promise<Edition[]> {
+  const { data, error } = await supabase
+    .from('editions')
+    .select(EDITION_SELECT)
+    .order('title', { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as Edition[];
 }

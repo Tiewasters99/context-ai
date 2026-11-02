@@ -9,7 +9,7 @@ import type { MoreItem } from '@/components/reader/reader-chrome';
 import {
   type Edition, type EditionRights,
   type LibraryBook,
-  listMyEditions, listOwnedEditions, getEdition, createEdition, updateEdition, deleteEdition,
+  listVisibleEditions, listOwnedEditions, getEdition, createEdition, updateEdition, deleteEdition,
   uploadAsset, listAssets, coverUrl, publishEdition, editionSource, editionMarks, editionBench,
   listLibraryPdfs, copyBookFromDocument,
 } from './editions';
@@ -35,13 +35,14 @@ import {
 /** The path prefix this page is served under: '' at read.grapheon.ai, '/reader' on contextspaces.ai. */
 const BASE = /^\/reader(\/|$)/.test(window.location.pathname) ? '/reader' : '';
 
-type Route = { name: 'home' } | { name: 'new' } | { name: 'read'; id: string };
+type Route = { name: 'home' } | { name: 'new' } | { name: 'how' } | { name: 'read'; id: string };
 
 function parseRoute(pathname: string): Route {
   const p = pathname.startsWith(BASE) ? pathname.slice(BASE.length) : pathname;
   const m = p.match(/^\/read\/([^/?#]+)/);
   if (m) return { name: 'read', id: decodeURIComponent(m[1]) };
   if (/^\/new\/?$/.test(p)) return { name: 'new' };
+  if (/^\/how\/?$/.test(p)) return { name: 'how' };
   return { name: 'home' };
 }
 
@@ -85,15 +86,6 @@ function Shell({ children, wide = false }: { children: React.ReactNode; wide?: b
   return (
     <div className="min-h-full" style={{ background: 'linear-gradient(180deg, #f4ecd8 0%, #e9dcbb 100%)', color: '#2b2315' }}>
       <div className={`mx-auto px-5 py-8 ${wide ? 'max-w-5xl' : 'max-w-xl'}`}>{children}</div>
-    </div>
-  );
-}
-
-function Wordmark({ small = false }: { small?: boolean }) {
-  return (
-    <div className="flex items-baseline gap-2 select-none">
-      <span style={{ fontFamily: SERIF, fontWeight: 600, fontSize: small ? 22 : 34, letterSpacing: '0.01em' }}>Grapheon</span>
-      <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: small ? 16 : 22, opacity: 0.75 }}>Reader</span>
     </div>
   );
 }
@@ -296,24 +288,62 @@ function SignIn() {
 // My Library
 // ---------------------------------------------------------------------------
 
+/** Only a few covers are signed at once; the rest wait for their turn and for the viewport. */
+const COVER_SIGN_LIMIT = 6;
+let coverSigning = 0;
+const coverQueue: Array<() => void> = [];
+function signCoverSlot(): Promise<() => void> {
+  return new Promise((resolve) => {
+    const go = () => { coverSigning += 1; resolve(() => { coverSigning -= 1; coverQueue.shift()?.(); }); };
+    if (coverSigning < COVER_SIGN_LIMIT) go(); else coverQueue.push(go);
+  });
+}
+
+function useInView<T extends Element>(): [React.RefObject<T | null>, boolean] {
+  const ref = useRef<T | null>(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || seen) return;
+    if (!('IntersectionObserver' in window)) { setSeen(true); return; }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setSeen(true); io.disconnect(); }
+    }, { rootMargin: '300px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [seen]);
+  return [ref, seen];
+}
+
+/** A jacket on the shelf: the title and author on cloth until the cover file
+ *  scrolls near, then the signed cover. The signing is paced so a shelf of
+ *  four hundred books does not ask for four hundred URLs at once. */
 function Cover({ edition }: { edition: Edition }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [ref, near] = useInView<HTMLDivElement>();
   useEffect(() => {
+    if (!near || !edition.cover_path) return;
     let live = true;
-    void coverUrl(edition).then((u) => { if (live) setUrl(u); }).catch(() => {});
+    let release: (() => void) | null = null;
+    void signCoverSlot()
+      .then((r) => { release = r; return live ? coverUrl(edition) : null; })
+      .then((u) => { if (live && u) setUrl(u); })
+      .catch(() => {})
+      .finally(() => release?.());
     return () => { live = false; };
-  }, [edition]);
+  }, [edition, near]);
   return (
     <div
-      className="relative aspect-[2/3] w-full overflow-hidden rounded-sm shadow-[0_6px_18px_rgba(43,35,21,0.25)]"
-      style={{ background: 'linear-gradient(160deg, #5b4a2a, #2b2315)' }}
+      ref={ref}
+      className="relative aspect-[2/3] w-full overflow-hidden rounded-[2px]"
+      style={{ background: 'linear-gradient(160deg, #3a3528, #1f1c14)', boxShadow: '0 8px 22px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(217,189,122,0.28)' }}
     >
       {url ? (
-        <img src={url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <img src={url} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
       ) : (
-        <div className="absolute inset-0 flex flex-col items-center justify-center px-3 text-center text-[#f4ecd8]">
-          <span style={{ fontFamily: SERIF, fontSize: 18, fontWeight: 600, lineHeight: 1.15 }}>{edition.title}</span>
-          {edition.author && <span className="mt-2 text-[12px] opacity-75" style={{ fontFamily: SERIF, fontStyle: 'italic' }}>{edition.author}</span>}
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-3 text-center" style={{ color: 'rgba(233,214,160,0.9)' }}>
+          <span style={{ fontFamily: SERIF, fontSize: 16, fontWeight: 600, lineHeight: 1.15 }}>{edition.title}</span>
+          {edition.author && <span className="mt-2 text-[11px] opacity-75" style={{ fontFamily: SERIF, fontStyle: 'italic' }}>{edition.author}</span>}
         </div>
       )}
     </div>
@@ -324,27 +354,146 @@ function StatusBadge({ edition }: { edition: Edition }) {
   const text = edition.status === 'published' ? `Published · v${edition.version}`
     : edition.status === 'withdrawn' ? 'Withdrawn'
       : edition.version > 0 ? `Draft · v${edition.version} live` : 'Draft';
-  return <span className="text-[11px] uppercase tracking-[0.12em] opacity-60">{text}</span>;
+  return <span className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'rgba(217,189,122,0.6)' }}>{text}</span>;
+}
+
+// ---------------------------------------------------------------------------
+// The second page: the Library, in the cover's cloth and gilt
+// ---------------------------------------------------------------------------
+
+const SHELVES = ['Literature', 'History', 'Law', 'Science'] as const;
+type Shelf = (typeof SHELVES)[number];
+
+/** The Library shelf a mirrored book came from. The mirror writes it into the
+ *  rights note ("filed in the Library (Law)"); a `shelf` column would be the
+ *  durable home for it. */
+function shelfOf(ed: Edition): Shelf | 'Library' | null {
+  if (ed.access !== 'library') return null;
+  const m = /filed in the Library \((Literature|History|Law|Science)\)/.exec(ed.rights_note ?? '');
+  return (m?.[1] as Shelf | undefined) ?? 'Library';
+}
+
+/** Volumes of one set stay together and in order; everything else by title. */
+function byShelfOrder(a: Edition, b: Edition): number {
+  const ka = a.collection_key ?? a.title;
+  const kb = b.collection_key ?? b.title;
+  const c = ka.localeCompare(kb, 'en', { sensitivity: 'base' });
+  if (c !== 0) return c;
+  return (a.volume ?? 0) - (b.volume ?? 0);
+}
+
+const MANIFESTO =
+  'The Grapheon Reader is a revolutionary approach to online publishing. Starting from our curated library of public domain works, personally selected by our founder, a summa cum laude comparative literature graduate of Yale University, customize any work with images and videos and, if the spirit moves you, create products with our seamless connection to your online store. The library is constantly updated with tasteful works of history, literature, science and law, spanning English, American, French, Spanish, Italian, German, and Asian traditions, regularly delivered to your Reader, together with a weekly summary of new editions, scholarly essays, and links to physical purchase options. Our aim is to enable rediscovery, recreation and regeneration of our global literary past—and breathe new life into the almost forgotten art of reading, by combining cutting edge technology with a timeless past.';
+
+const goldQuiet =
+  'inline-flex items-center gap-2 rounded-md border px-3 py-2 text-[13px] disabled:opacity-50';
+const goldQuietStyle = { borderColor: 'rgba(217,189,122,0.45)', color: GOLD } as const;
+
+/** Two gilt hairlines, as on the cover's rules. */
+function GiltRule({ className = '' }: { className?: string }) {
+  return (
+    <div aria-hidden className={className}>
+      <div style={{ height: 1, background: 'rgba(217,189,122,0.7)' }} />
+      <div style={{ height: 1, marginTop: 3, background: 'rgba(217,189,122,0.35)' }} />
+    </div>
+  );
+}
+
+function GiltWordmark() {
+  return (
+    <div className="flex items-baseline gap-2 select-none" style={{ color: GOLD }}>
+      <span style={{ fontFamily: SERIF, fontWeight: 600, fontSize: 28, letterSpacing: '0.02em' }}>Grapheon</span>
+      <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 18, opacity: 0.85 }}>Reader</span>
+    </div>
+  );
+}
+
+function ClothPage({ session, navigate, children }: { session: Session; navigate: (to: string) => void; children: React.ReactNode }) {
+  return (
+    <div className="min-h-[100dvh]" style={{ background: `radial-gradient(120% 60% at 50% 0%, #2a2719 0%, ${CLOTH} 60%)`, color: '#f1e3b8' }}>
+      <div className="mx-auto max-w-6xl px-5 py-7 sm:px-8">
+        <div className="flex items-end justify-between gap-4">
+          <button className="text-left" onClick={() => navigate('/')}><GiltWordmark /></button>
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline text-[12px]" style={{ color: 'rgba(233,214,160,0.55)' }}>{session.user.email}</span>
+            <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate('/new')}><Plus size={15} /> New edition</button>
+            <button className={goldQuiet} style={goldQuietStyle} onClick={() => void supabase.auth.signOut()} title="Sign out"><LogOut size={14} /></button>
+          </div>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ShelfHeading({ title, count }: { title: string; count: number }) {
+  return (
+    <div className="mt-12 mb-5">
+      <div className="flex items-baseline gap-3">
+        <h2 style={{ fontFamily: SERIF, fontSize: 32, fontWeight: 600, color: GOLD, lineHeight: 1 }}>{title}</h2>
+        <span className="text-[11px] uppercase tracking-[0.18em]" style={{ color: 'rgba(217,189,122,0.6)' }}>{count} {count === 1 ? 'work' : 'works'}</span>
+      </div>
+      <GiltRule className="mt-3" />
+    </div>
+  );
+}
+
+function BookCard({ edition, navigate, onRemove }: { edition: Edition; navigate: (to: string) => void; onRemove?: () => void }) {
+  return (
+    <div className="group">
+      <button className="block w-full text-left" onClick={() => navigate(`/read/${edition.id}`)}>
+        <Cover edition={edition} />
+        <div className="mt-2.5 leading-tight">
+          <div style={{ fontFamily: SERIF, fontSize: 15, fontWeight: 600, color: '#f1e3b8' }}>{edition.title}</div>
+          {edition.author && <div className="mt-0.5 text-[12px]" style={{ color: 'rgba(233,214,160,0.7)', fontFamily: SERIF, fontStyle: 'italic' }}>{edition.author}</div>}
+          {edition.access !== 'library' && <div className="mt-1"><StatusBadge edition={edition} /></div>}
+        </div>
+      </button>
+      {onRemove && (
+        <button
+          className="mt-2 inline-flex items-center gap-1 text-[12px] opacity-0 group-hover:opacity-70 hover:!opacity-100"
+          style={{ color: GOLD }}
+          onClick={onRemove}
+        >
+          <Trash2 size={12} /> Remove
+        </button>
+      )}
+    </div>
+  );
 }
 
 function Library({ session, navigate }: { session: Session; navigate: (to: string) => void }) {
-  const [mine, setMine] = useState<Edition[] | null>(null);
+  const [all, setAll] = useState<Edition[] | null>(null);
   const [owned, setOwned] = useState<Edition[]>([]);
   const [trouble, setTrouble] = useState<string | null>(null);
-  const [removing, setRemoving] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<Edition | null>(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let live = true;
-    Promise.all([listMyEditions(), listOwnedEditions()])
-      .then(([m, o]) => { if (live) { setMine(m); setOwned(o); } })
+    Promise.all([listVisibleEditions(), listOwnedEditions()])
+      .then(([v, o]) => { if (live) { setAll(v); setOwned(o); } })
       .catch((e: unknown) => {
         if (!live) return;
         setTrouble(e instanceof Error ? e.message : 'The library could not be read.');
-        setMine([]);
+        setAll([]);
       });
     return () => { live = false; };
   }, [tick]);
+
+  const uid = session.user.id;
+  const shelves = useMemo(() => {
+    const m = new Map<string, Edition[]>();
+    for (const ed of all ?? []) {
+      const shelf = shelfOf(ed);
+      if (!shelf) continue;
+      (m.get(shelf) ?? m.set(shelf, []).get(shelf)!).push(ed);
+    }
+    for (const list of m.values()) list.sort(byShelfOrder);
+    return m;
+  }, [all]);
+  const mine = useMemo(() => (all ?? []).filter((ed) => ed.publisher_user_id === uid && ed.access !== 'library').sort((a, b) => b.updated_at.localeCompare(a.updated_at)), [all, uid]);
+  const ownedIds = new Set(owned.map((e) => e.id));
 
   const remove = async (ed: Edition) => {
     try {
@@ -356,84 +505,137 @@ function Library({ session, navigate }: { session: Session; navigate: (to: strin
     }
   };
 
-  return (
-    <Shell wide>
-      <div className="flex items-end justify-between gap-4">
-        <Wordmark />
-        <div className="flex items-center gap-2">
-          <span className="hidden sm:inline text-[12px] opacity-60">{session.user.email}</span>
-          <button className={quiet} onClick={() => void supabase.auth.signOut()} title="Sign out"><LogOut size={14} /></button>
-        </div>
-      </div>
+  const shelfOrder: string[] = [...SHELVES, 'Library'];
+  const anyShelf = shelfOrder.some((k) => (shelves.get(k)?.length ?? 0) > 0);
+  const grid = 'grid grid-cols-3 gap-x-4 gap-y-7 sm:grid-cols-4 md:grid-cols-6';
 
-      <div className="mt-8 flex items-baseline justify-between">
-        <h2 style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 600 }}>My Library</h2>
-        <button className={primary} onClick={() => navigate('/new')}><Plus size={15} /> New edition</button>
+  return (
+    <ClothPage session={session} navigate={navigate}>
+      <GiltRule className="mt-7" />
+      <div className="mx-auto max-w-3xl py-9 text-center">
+        <p
+          className="text-left first-letter:float-left first-letter:mr-2 first-letter:text-[64px] first-letter:leading-[0.8] first-letter:font-semibold"
+          style={{ fontFamily: SERIF, fontSize: 19, lineHeight: 1.55, color: 'rgba(241,227,184,0.94)' }}
+        >
+          {MANIFESTO}
+        </p>
       </div>
+      <GiltRule />
       <Trouble text={trouble} />
 
-      {mine === null ? (
-        <p className="mt-6 text-[14px] opacity-60">Opening the shelves…</p>
-      ) : mine.length === 0 && owned.length === 0 ? (
-        <div className="mt-6 rounded-lg border border-dashed border-[#c9b98f] p-8 text-center">
-          <Sparkles className="mx-auto opacity-50" size={22} />
-          <p className="mt-3" style={{ fontFamily: SERIF, fontSize: 20 }}>Nothing on the shelf yet.</p>
-          <p className="mt-1 text-[14px] opacity-70">Upload a PDF, lay a clip where its plate sits, and read it back.</p>
-          <button className={`${primary} mt-5`} onClick={() => navigate('/new')}><Plus size={15} /> New edition</button>
-        </div>
+      {all === null ? (
+        <p className="mt-8 text-[14px]" style={{ color: 'rgba(233,214,160,0.6)' }}>Opening the shelves…</p>
       ) : (
         <>
+          {shelfOrder.map((k) => {
+            const list = shelves.get(k);
+            if (!list || list.length === 0) return null;
+            return (
+              <section key={k}>
+                <ShelfHeading title={k} count={list.length} />
+                <div className={grid}>
+                  {list.map((ed) => <BookCard key={ed.id} edition={ed} navigate={navigate} />)}
+                </div>
+              </section>
+            );
+          })}
+
           {mine.length > 0 && (
-            <div className="mt-5 grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 md:grid-cols-4">
-              {mine.map((ed) => (
-                <div key={ed.id} className="group">
-                  <button className="block w-full text-left" onClick={() => navigate(`/read/${ed.id}`)}>
-                    <Cover edition={ed} />
-                    <div className="mt-2.5 leading-tight">
-                      <div style={{ fontFamily: SERIF, fontSize: 17, fontWeight: 600 }}>{ed.title}</div>
-                      {ed.author && <div className="text-[13px] opacity-70">{ed.author}</div>}
-                      <div className="mt-1"><StatusBadge edition={ed} /></div>
-                    </div>
-                  </button>
-                  {ed.status === 'draft' && ed.version === 0 && (
-                    removing === ed.id ? (
-                      <div className="mt-2 flex items-center gap-2 text-[12px]">
+            <section>
+              <ShelfHeading title="My editions" count={mine.length} />
+              <div className={grid}>
+                {mine.map((ed) => (
+                  <div key={ed.id}>
+                    <BookCard
+                      edition={ed}
+                      navigate={navigate}
+                      onRemove={ed.status === 'draft' && ed.version === 0 ? () => setRemoving(ed) : undefined}
+                    />
+                    {removing?.id === ed.id && (
+                      <div className="mt-2 flex items-center gap-2 text-[12px]" style={{ color: GOLD }}>
                         <span>Remove this draft and its files?</span>
                         <button className="underline" onClick={() => void remove(ed)}>Yes</button>
                         <button className="underline opacity-60" onClick={() => setRemoving(null)}>No</button>
                       </div>
-                    ) : (
-                      <button
-                        className="mt-2 inline-flex items-center gap-1 text-[12px] opacity-0 group-hover:opacity-60 hover:!opacity-100"
-                        onClick={() => setRemoving(ed.id)}
-                      >
-                        <Trash2 size={12} /> Remove
-                      </button>
-                    )
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {owned.length > 0 && (
-            <>
-              <h3 className="mt-10" style={{ fontFamily: SERIF, fontSize: 22, fontWeight: 600 }}>Bought</h3>
-              <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 md:grid-cols-4">
-                {owned.map((ed) => (
-                  <button key={ed.id} className="block text-left" onClick={() => navigate(`/read/${ed.id}`)}>
-                    <Cover edition={ed} />
-                    <div className="mt-2.5 leading-tight">
-                      <div style={{ fontFamily: SERIF, fontSize: 17, fontWeight: 600 }}>{ed.title}</div>
-                      {ed.author && <div className="text-[13px] opacity-70">{ed.author}</div>}
-                    </div>
-                  </button>
+                    )}
+                  </div>
                 ))}
               </div>
-            </>
+            </section>
+          )}
+
+          {owned.length > 0 && (
+            <section>
+              <ShelfHeading title="Bought" count={owned.length} />
+              <div className={grid}>
+                {owned.filter((ed) => ownedIds.has(ed.id)).map((ed) => <BookCard key={ed.id} edition={ed} navigate={navigate} />)}
+              </div>
+            </section>
+          )}
+
+          {!anyShelf && mine.length === 0 && owned.length === 0 && (
+            <div className="mt-10 rounded-lg border border-dashed p-8 text-center" style={{ borderColor: 'rgba(217,189,122,0.4)' }}>
+              <Sparkles className="mx-auto" size={22} style={{ color: GOLD }} />
+              <p className="mt-3" style={{ fontFamily: SERIF, fontSize: 20, color: GOLD }}>The shelves are being filled.</p>
+              <p className="mt-1 text-[14px]" style={{ color: 'rgba(233,214,160,0.7)' }}>Or start an edition of your own: a PDF, a title, an author.</p>
+              <button className={`${goldPrimary} mt-5`} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate('/new')}><Plus size={15} /> New edition</button>
+            </div>
           )}
         </>
       )}
-    </Shell>
+      <div className="h-16" />
+    </ClothPage>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The third page: How it works — a spotlight on one work
+// ---------------------------------------------------------------------------
+
+/** Eden picks the work and supplies the pictures and the film; until then the
+ *  page stands at /how, unlinked, with the frame in place. */
+const SPOTLIGHT: { work: string | null; author: string | null; editionId: string | null; images: string[]; video: string | null; copy: string[] } = {
+  work: null,
+  author: null,
+  editionId: null,
+  images: [],
+  video: null,
+  copy: [],
+};
+
+function Spotlight({ session, navigate }: { session: Session; navigate: (to: string) => void }) {
+  const s = SPOTLIGHT;
+  return (
+    <ClothPage session={session} navigate={navigate}>
+      <GiltRule className="mt-7" />
+      <div className="mx-auto max-w-3xl py-10">
+        <div className="text-[12px] uppercase tracking-[0.22em]" style={{ color: 'rgba(217,189,122,0.7)' }}>How it works</div>
+        <h1 className="mt-2" style={{ fontFamily: SERIF, fontSize: 40, fontWeight: 600, color: GOLD, lineHeight: 1.05 }}>
+          A Spotlight on{' '}
+          {s.work ? <em style={{ fontStyle: 'italic' }}>{s.work}</em> : <span className="inline-block w-[7ch] border-b" style={{ borderColor: 'rgba(217,189,122,0.6)' }}>&nbsp;</span>}
+        </h1>
+        {s.author && <div className="mt-2" style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 18, color: 'rgba(233,214,160,0.8)' }}>{s.author}</div>}
+        {s.video && (
+          <div className="mt-8 overflow-hidden rounded-sm" style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }}>
+            <video src={s.video} controls playsInline className="block w-full" />
+          </div>
+        )}
+        {s.images.length > 0 && (
+          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
+            {s.images.map((src) => <img key={src} src={src} alt="" className="w-full rounded-sm" style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }} />)}
+          </div>
+        )}
+        <div className="mt-8 space-y-5" style={{ fontFamily: SERIF, fontSize: 19, lineHeight: 1.55, color: 'rgba(241,227,184,0.94)' }}>
+          {s.copy.length > 0 ? s.copy.map((p, i) => <p key={i}>{p}</p>) : (
+            <p style={{ color: 'rgba(233,214,160,0.6)' }}>The work, its pictures and its film are chosen by the editors and will appear here.</p>
+          )}
+        </div>
+        {s.editionId && (
+          <button className={`${goldPrimary} mt-8`} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate(`/read/${s.editionId}`)}><BookOpen size={16} /> Open the edition</button>
+        )}
+      </div>
+      <GiltRule />
+    </ClothPage>
   );
 }
 
@@ -866,12 +1068,13 @@ export default function EditionApp() {
   const { session, ready } = useSession();
 
   useEffect(() => {
-    document.title = route.name === 'read' || !session ? 'Grapheon Reader' : 'My Library — Grapheon Reader';
+    document.title = route.name === 'how' ? 'How it works — Grapheon Reader' : 'Grapheon Reader';
   }, [route, session]);
 
   if (!ready) return <Shell><p className="pt-10 text-[14px] opacity-60">…</p></Shell>;
   if (!session) return <SignIn />;
   if (route.name === 'new') return <NewEdition navigate={navigate} />;
+  if (route.name === 'how') return <Spotlight session={session} navigate={navigate} />;
   if (route.name === 'read') return <Read key={route.id} id={route.id} session={session} navigate={navigate} />;
   return <Library session={session} navigate={navigate} />;
 }
