@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search, Shirt } from 'lucide-react';
@@ -15,6 +15,7 @@ import {
   uploadAsset, listAssets, coverUrl, publishEdition, editionSource, editionMarks, editionBench,
   listLibraryPdfs, copyBookFromDocument,
 } from './editions';
+import { type Week, type Block, type Inline, loadWeeklyIndex, loadWeekly, parseMarkdown, teaserOf, filedOn } from './weekly';
 
 // The Grapheon Reader (docs/specs/GRAPHEON-READER-2026-10-10.md). Phase 1,
 // step 3: sign in, My Library, New edition (a PDF uploaded), the Reader
@@ -37,7 +38,7 @@ import {
 /** The path prefix this page is served under: '' at read.grapheon.ai, '/reader' on contextspaces.ai. */
 const BASE = /^\/reader(\/|$)/.test(window.location.pathname) ? '/reader' : '';
 
-type Route = { name: 'home' } | { name: 'new' } | { name: 'how' } | { name: 'read'; id: string };
+type Route = { name: 'home' } | { name: 'new' } | { name: 'how' } | { name: 'weekly'; date: string | null } | { name: 'read'; id: string };
 
 function parseRoute(pathname: string): Route {
   const p = pathname.startsWith(BASE) ? pathname.slice(BASE.length) : pathname;
@@ -45,6 +46,8 @@ function parseRoute(pathname: string): Route {
   if (m) return { name: 'read', id: decodeURIComponent(m[1]) };
   if (/^\/new\/?$/.test(p)) return { name: 'new' };
   if (/^\/how\/?$/.test(p)) return { name: 'how' };
+  const w = /^\/weekly(?:\/(\d{4}-\d{2}-\d{2}))?\/?$/.exec(p);
+  if (w) return { name: 'weekly', date: w[1] ?? null };
   return { name: 'home' };
 }
 
@@ -410,17 +413,21 @@ function GiltWordmark() {
   );
 }
 
-function ClothPage({ session, navigate, children }: { session: Session; navigate: (to: string) => void; children: React.ReactNode }) {
+function ClothPage({ session, navigate, children }: { session: Session | null; navigate: (to: string) => void; children: React.ReactNode }) {
   return (
     <div className="min-h-[100dvh]" style={{ background: `radial-gradient(120% 60% at 50% 0%, #2a2719 0%, ${CLOTH} 60%)`, color: '#f1e3b8' }}>
       <div className="mx-auto max-w-6xl px-5 py-7 sm:px-8">
         <div className="flex items-end justify-between gap-4">
           <button className="text-left" onClick={() => navigate('/')}><GiltWordmark /></button>
-          <div className="flex items-center gap-2">
-            <span className="hidden sm:inline text-[12px]" style={{ color: 'rgba(233,214,160,0.55)' }}>{session.user.email}</span>
-            <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate('/new')}><Plus size={15} /> New edition</button>
-            <button className={goldQuiet} style={goldQuietStyle} onClick={() => void supabase.auth.signOut()} title="Sign out"><LogOut size={14} /></button>
-          </div>
+          {session ? (
+            <div className="flex items-center gap-2">
+              <span className="hidden sm:inline text-[12px]" style={{ color: 'rgba(233,214,160,0.55)' }}>{session.user.email}</span>
+              <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate('/new')}><Plus size={15} /> New edition</button>
+              <button className={goldQuiet} style={goldQuietStyle} onClick={() => void supabase.auth.signOut()} title="Sign out"><LogOut size={14} /></button>
+            </div>
+          ) : (
+            <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate('/')}><BookOpen size={15} /> Sign in</button>
+          )}
         </div>
         {children}
       </div>
@@ -470,6 +477,13 @@ function Library({ session, navigate }: { session: Session; navigate: (to: strin
   const [trouble, setTrouble] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Edition | null>(null);
   const [tick, setTick] = useState(0);
+  const [week, setWeek] = useState<Week | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void loadWeeklyIndex().then((ws) => { if (live) setWeek(ws[0] ?? null); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -495,6 +509,12 @@ function Library({ session, navigate }: { session: Session; navigate: (to: strin
     return m;
   }, [all]);
   const mine = useMemo(() => (all ?? []).filter((ed) => ed.publisher_user_id === uid && ed.access !== 'library').sort((a, b) => b.updated_at.localeCompare(a.updated_at)), [all, uid]);
+  const fresh = useMemo(() => {
+    if (!week) return [];
+    return (all ?? [])
+      .filter((ed) => { const d = filedOn(ed.rights_note); return ed.access === 'library' && !!d && d >= week.from && d <= week.to; })
+      .sort(byShelfOrder);
+  }, [all, week]);
   const ownedIds = new Set(owned.map((e) => e.id));
 
   const remove = async (ed: Edition) => {
@@ -523,6 +543,16 @@ function Library({ session, navigate }: { session: Session; navigate: (to: strin
         </p>
       </div>
       <GiltRule />
+      {week && <WeeklyCard week={week} navigate={navigate} />}
+      {fresh.length > 0 && (
+        <section>
+          <ShelfHeading title="New this week" count={fresh.length} />
+          <div className={grid}>
+            {fresh.map((ed) => <BookCard key={ed.id} edition={ed} navigate={navigate} />)}
+          </div>
+        </section>
+      )}
+      {SPOTLIGHT.work && <SpotlightCard navigate={navigate} />}
       <Trouble text={trouble} />
 
       {all === null ? (
@@ -586,6 +616,157 @@ function Library({ session, navigate }: { session: Session; navigate: (to: strin
         </>
       )}
       <div className="h-16" />
+    </ClothPage>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The weekly letter: New Acquisitions
+// ---------------------------------------------------------------------------
+
+function Inlines({ kids }: { kids: Inline[] }) {
+  return (
+    <>
+      {kids.map((x, i) => {
+        if (x.t === 'link') {
+          return <a key={i} href={x.href} target="_blank" rel="noreferrer" className="underline underline-offset-2" style={{ color: GOLD }}><Inlines kids={x.kids} /></a>;
+        }
+        const style: React.CSSProperties = {};
+        if (x.b) style.fontWeight = 600;
+        if (x.i) style.fontStyle = 'italic';
+        return x.b || x.i ? <span key={i} style={style}>{x.s}</span> : <React.Fragment key={i}>{x.s}</React.Fragment>;
+      })}
+    </>
+  );
+}
+
+function Letter({ blocks }: { blocks: Block[] }) {
+  const body: React.CSSProperties = { fontFamily: SERIF, fontSize: 18, lineHeight: 1.55, color: 'rgba(241,227,184,0.94)' };
+  return (
+    <div className="space-y-4">
+      {blocks.map((blk, i) => {
+        if (blk.t === 'hr') return <GiltRule key={i} className="my-8" />;
+        if (blk.t === 'h') {
+          if (blk.level === 1) return <h1 key={i} style={{ fontFamily: SERIF, fontSize: 36, fontWeight: 600, color: GOLD, lineHeight: 1.1 }}><Inlines kids={blk.kids} /></h1>;
+          if (blk.level === 2) return <h2 key={i} className="pt-4" style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 600, color: GOLD, lineHeight: 1.15 }}><Inlines kids={blk.kids} /></h2>;
+          return <h3 key={i} className="pt-2" style={{ fontFamily: SERIF, fontSize: 21, fontWeight: 600, color: GOLD }}><Inlines kids={blk.kids} /></h3>;
+        }
+        if (blk.t === 'ul') {
+          return (
+            <ul key={i} className="space-y-2.5 pl-5" style={body}>
+              {blk.items.map((it, j) => (
+                <li key={j} className="relative">
+                  <span aria-hidden className="absolute -left-5" style={{ color: GOLD }}>·</span>
+                  <Inlines kids={it} />
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        return <p key={i} style={body}><Inlines kids={blk.kids} /></p>;
+      })}
+    </div>
+  );
+}
+
+function prettyRange(w: Week): string {
+  const f = (d: string, withYear: boolean) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', ...(withYear ? { year: 'numeric' } : {}) });
+  return `${f(w.from, false)} – ${f(w.to, true)}`;
+}
+
+/** The lead card on the Library page: this week's salutation and the way in. */
+function WeeklyCard({ week, navigate }: { week: Week; navigate: (to: string) => void }) {
+  const [t, setT] = useState<{ title: string | null; byline: string | null; teaser: string | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    void loadWeekly(week.date).then((md) => { if (live && md) setT(teaserOf(md)); }).catch(() => {});
+    return () => { live = false; };
+  }, [week.date]);
+  return (
+    <section className="mt-10">
+      <button
+        className="block w-full rounded-sm p-6 text-left sm:p-8"
+        style={{ background: 'rgba(0,0,0,0.28)', boxShadow: 'inset 0 0 0 1px rgba(217,189,122,0.45), 0 20px 40px rgba(0,0,0,0.35)' }}
+        onClick={() => navigate(`/weekly/${week.date}`)}
+      >
+        <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'rgba(217,189,122,0.75)' }}>New Acquisitions · the week of {prettyRange(week)}</div>
+        <div className="mt-2" style={{ fontFamily: SERIF, fontSize: 30, fontWeight: 600, color: GOLD, lineHeight: 1.1 }}>This week's letter from the Library</div>
+        {t?.teaser && (
+          <p className="mt-4 max-w-3xl" style={{ fontFamily: SERIF, fontSize: 18, lineHeight: 1.5, color: 'rgba(241,227,184,0.9)' }}>{t.teaser}</p>
+        )}
+        <div className="mt-4 inline-flex items-center gap-2 text-[14px] underline underline-offset-4" style={{ color: GOLD }}>
+          Read the letter <ChevronRight size={15} />
+        </div>
+      </button>
+    </section>
+  );
+}
+
+function SpotlightCard({ navigate }: { navigate: (to: string) => void }) {
+  return (
+    <section className="mt-8">
+      <button
+        className="block w-full rounded-sm p-6 text-left sm:p-8"
+        style={{ background: 'rgba(0,0,0,0.28)', boxShadow: 'inset 0 0 0 1px rgba(217,189,122,0.45)' }}
+        onClick={() => navigate('/how')}
+      >
+        <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'rgba(217,189,122,0.75)' }}>How it works</div>
+        <div className="mt-2" style={{ fontFamily: SERIF, fontSize: 30, fontWeight: 600, color: GOLD, lineHeight: 1.1 }}>A Spotlight on <em>{SPOTLIGHT.work}</em></div>
+        <div className="mt-4 inline-flex items-center gap-2 text-[14px] underline underline-offset-4" style={{ color: GOLD }}>
+          See it <ChevronRight size={15} />
+        </div>
+      </button>
+    </section>
+  );
+}
+
+/** /weekly and /weekly/<date>: the letter in full, readable without signing in. */
+function WeeklyPage({ date, session, navigate }: { date: string | null; session: Session | null; navigate: (to: string) => void }) {
+  const [weeks, setWeeks] = useState<Week[] | null>(null);
+  const [md, setMd] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void loadWeeklyIndex().then((ws) => { if (live) setWeeks(ws); }).catch(() => { if (live) setWeeks([]); });
+    return () => { live = false; };
+  }, []);
+  const chosen = date ?? weeks?.[0]?.date ?? null;
+  useEffect(() => {
+    if (!chosen) return;
+    let live = true;
+    setMd(undefined);
+    void loadWeekly(chosen).then((m) => { if (live) setMd(m); }).catch(() => { if (live) setMd(null); });
+    return () => { live = false; };
+  }, [chosen]);
+  const blocks = useMemo(() => (md ? parseMarkdown(md) : []), [md]);
+  const others = (weeks ?? []).filter((w) => w.date !== chosen);
+  return (
+    <ClothPage session={session} navigate={navigate}>
+      <GiltRule className="mt-7" />
+      <div className="mx-auto max-w-3xl py-10">
+        <button className="mb-6 inline-flex items-center gap-1 text-[13px] underline underline-offset-4" style={{ color: GOLD }} onClick={() => navigate('/')}>
+          <ChevronRight size={14} className="rotate-180" /> The Library
+        </button>
+        {weeks !== null && !chosen && <p style={{ fontFamily: SERIF, fontSize: 18, color: 'rgba(233,214,160,0.7)' }}>No letter has gone out yet.</p>}
+        {chosen && md === undefined && <p style={{ fontFamily: SERIF, fontSize: 18, color: 'rgba(233,214,160,0.7)' }}>Opening the letter…</p>}
+        {chosen && md === null && <p style={{ fontFamily: SERIF, fontSize: 18, color: 'rgba(233,214,160,0.7)' }}>There is no letter for {chosen}.</p>}
+        {md && <Letter blocks={blocks} />}
+        {others.length > 0 && (
+          <div className="mt-12">
+            <GiltRule />
+            <div className="mt-4 text-[11px] uppercase tracking-[0.22em]" style={{ color: 'rgba(217,189,122,0.75)' }}>Earlier letters</div>
+            <ul className="mt-2 space-y-1">
+              {others.map((w) => (
+                <li key={w.date}>
+                  <button className="underline underline-offset-4" style={{ fontFamily: SERIF, fontSize: 17, color: GOLD }} onClick={() => navigate(`/weekly/${w.date}`)}>
+                    {w.title ?? `The week of ${prettyRange(w)}`}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+      <GiltRule />
     </ClothPage>
   );
 }
@@ -1140,10 +1321,11 @@ export default function EditionApp() {
   const { session, ready } = useSession();
 
   useEffect(() => {
-    document.title = route.name === 'how' ? 'How it works — Grapheon Reader' : 'Grapheon Reader';
+    document.title = route.name === 'how' ? 'How it works — Grapheon Reader' : route.name === 'weekly' ? 'New Acquisitions — Grapheon Reader' : 'Grapheon Reader';
   }, [route, session]);
 
   if (!ready) return <Shell><p className="pt-10 text-[14px] opacity-60">…</p></Shell>;
+  if (route.name === 'weekly') return <WeeklyPage date={route.date} session={session} navigate={navigate} />;
   if (!session) return <SignIn />;
   if (route.name === 'new') return <NewEdition navigate={navigate} />;
   if (route.name === 'how') return <Spotlight session={session} navigate={navigate} />;
