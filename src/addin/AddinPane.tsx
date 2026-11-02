@@ -214,6 +214,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
   // Which Equazia document this is: the tag in the file, else the setting a
   // slice-1 file carries. Asked once, and again in the mock when a file is chosen.
   const identify = useCallback(async () => {
+    setError(null); setNotice(null);
     try {
       const tag = await bridge.readTag();
       const id = tag?.documentId ?? bridge.getSetting(SETTING_BRIEF);
