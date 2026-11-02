@@ -54,7 +54,7 @@ export default defineConfig(({ mode }) => {
       rolldownOptions: {
         // Three doors: the workspace, the Reading Room standing on its own,
         // and the Grapheon Reader (editions).
-        input: { main: 'index.html', reader: 'reader.html', edition: 'edition.html' },
+        input: { main: 'index.html', reader: 'reader.html', edition: 'edition.html', addin: 'addin.html' },
       },
     },
     resolve: {
