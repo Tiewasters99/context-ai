@@ -35,7 +35,7 @@ import { type Week, type Block, type Inline, loadWeeklyIndex, loadWeekly, parseM
 // Where we are
 // ---------------------------------------------------------------------------
 
-/** The path prefix this page is served under: '' at read.grapheon.ai, '/reader' on contextspaces.ai. */
+/** The path prefix this page is served under: '' at reader.grapheon.ai, '/reader' on equazia.ai. */
 const BASE = /^\/reader(\/|$)/.test(window.location.pathname) ? '/reader' : '';
 
 type Route = { name: 'home' } | { name: 'new' } | { name: 'how' } | { name: 'weekly'; date: string | null } | { name: 'read'; id: string };
@@ -206,7 +206,7 @@ function SignIn() {
         password,
         options: {
           data: { display_name: address.split('@')[0] },
-          emailRedirectTo: `${window.location.origin}${BASE || '/reader'}`,
+          emailRedirectTo: `${window.location.origin}${BASE || '/'}`,
         },
       });
       if (error) setTrouble(error.message);
@@ -1008,7 +1008,7 @@ function LibraryPicker({ chosen, onChoose }: { chosen: LibraryBook | null; onCho
         {books === null ? (
           <p className="px-3 py-3 text-[13px] opacity-60">{q ? `Looking for "${q}"…` : 'Looking on the shelves…'}</p>
         ) : books.length === 0 ? (
-          <p className="px-3 py-3 text-[13px] opacity-60">{q ? 'No PDF by that title.' : 'No PDFs in Equazia yet.'}</p>
+          <p className="px-3 py-3 text-[13px] opacity-60">{q ? 'No PDF by that title.' : 'No PDFs in your Library yet.'}</p>
         ) : books.map((b) => (
           <button
             key={b.id}
@@ -1062,7 +1062,7 @@ function NewEdition({ navigate }: { navigate: (to: string) => void }) {
       setBusy('Making the edition…');
       edition = await createEdition({ title, author: author || null });
       if (door === 'library' && book) {
-        setBusy('Copying the book from Equazia…');
+        setBusy('Copying the book from your Library…');
         await copyBookFromDocument(edition, book.id);
       } else if (file) {
         setBusy('Uploading the book…');
@@ -1093,7 +1093,7 @@ function NewEdition({ navigate }: { navigate: (to: string) => void }) {
       <form onSubmit={make} className="mt-6 space-y-4">
         <div className="flex gap-2">
           <button type="button" onClick={() => setDoor('library')} className={`${quiet} flex-1 justify-center ${door === 'library' ? 'bg-[#f1e6c9] border-[#8a6d2f]' : ''}`}>
-            <LibraryIcon size={14} /> From Equazia
+            <LibraryIcon size={14} /> From my Library
           </button>
           <button type="button" onClick={() => setDoor('upload')} className={`${quiet} flex-1 justify-center ${door === 'upload' ? 'bg-[#f1e6c9] border-[#8a6d2f]' : ''}`}>
             <Upload size={14} /> Upload a PDF
