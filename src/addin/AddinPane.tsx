@@ -39,8 +39,14 @@ const FLAG_TINT: Record<CiteFlag, string> = {
   unchecked: 'text-white/40',
 };
 
+/** A calendar date in the reader's own day, YYYY-MM-DD (not UTC's). */
+function localDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDate(new Date());
 }
 
 /** The paragraph of the plain text that holds these words (the log's `context`). */
@@ -233,6 +239,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
 
   const pickMatter = useCallback((id: string) => {
     setMatterId(id);
+    setError(null);
     void bridge.setSetting(SETTING_MATTER, id);
   }, [bridge]);
 
@@ -369,7 +376,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
   /** A Word comment carrying the latest reading in the log — no new log row. */
   const commentOnly = useCallback(async (r: Row) => {
     if (!r.reading) { setSelectNote('Confirm or mark a Problem first; the comment carries that reading.'); return; }
-    const d = r.reading.created_at.slice(0, 10);
+    const d = localDate(new Date(r.reading.created_at));
     const text = r.reading.status === 'confirmed'
       ? `${COMMENT_PREFIX} Confirmed ${r.reading.initials} ${d}${r.found.text ? ` · ${r.found.text}` : ''}${r.reading.note ? ` · ${r.reading.note}` : ''}`
       : `${COMMENT_PREFIX} Problem ${r.reading.initials} ${d}${r.reading.note ? `: ${r.reading.note}` : ''}`;
@@ -479,7 +486,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
             </div>
             <div className="mb-2 flex items-center gap-2">
               <label className="text-[11px] text-white/45">Initials</label>
-              <input value={initials} onChange={(e) => setInitials(e.target.value.toUpperCase().slice(0, 6))} placeholder="EQ"
+              <input value={initials} onChange={(e) => setInitials(e.target.value.toUpperCase().slice(0, 6))} placeholder="initials"
                 className="w-14 rounded bg-white/[0.06] border border-white/10 px-1.5 py-0.5 text-[12px] outline-none focus:border-primary/60" />
               <span className="text-[10.5px] text-white/35">signs the log</span>
             </div>
