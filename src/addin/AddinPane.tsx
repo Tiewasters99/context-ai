@@ -386,7 +386,8 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
     } catch (e) { setSelectNote(`Word could not remove it: ${(e as Error).message}`); }
   }, [bridge]);
 
-  const canRun = !!matterId && !busy;
+  // The button stays bright; what it still needs is said under it, not by dimming it.
+  const needs = !matterId ? 'Choose the matter this brief draws on above.' : (bridge.kind === 'mock' && !mockFile ? 'Mock Word: choose a .docx above.' : null);
 
   return (
     <>
@@ -437,18 +438,19 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
         {/* Confirm */}
         <section className="space-y-1.5">
           <div className="flex gap-1.5">
-            <button onClick={() => void confirm({ all: false })} disabled={!canRun}
-              className="flex-1 rounded-md bg-primary text-black font-medium py-2 text-[13px] disabled:opacity-40 flex items-center justify-center gap-1.5">
+            <button onClick={() => void confirm({ all: false })} disabled={busy}
+              className="flex-1 rounded-md bg-primary text-black font-medium py-2 text-[13px] disabled:opacity-60 flex items-center justify-center gap-1.5">
               {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Confirm this brief
             </button>
             {run && !busy && (
-              <button onClick={() => void confirm({ all: true })} disabled={!canRun} title="Re-check all: ignore the last run"
+              <button onClick={() => void confirm({ all: true })} disabled={busy} title="Re-check all: ignore the last run"
                 className="rounded-md border border-white/15 px-2 text-white/60 hover:text-white disabled:opacity-40"><RefreshCw size={13} /></button>
             )}
             {busy && (
               <button onClick={() => abortRef.current?.abort()} className="rounded-md border border-white/15 px-2.5 text-[12px] text-white/70 hover:text-white">Stop</button>
             )}
           </div>
+          {!busy && needs && <p className="text-[11px] text-white/50 leading-snug">{needs}</p>}
           {progress && <p className="text-[11px] text-white/55 leading-snug">{progressLine(progress)}</p>}
           {lease && (
             <div className="rounded-md border border-amber-400/30 bg-amber-400/10 p-2 text-[11.5px] text-amber-100">
