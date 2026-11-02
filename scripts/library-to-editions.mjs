@@ -96,7 +96,10 @@ const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: fal
 
 const log = (...a) => console.log(...a);
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+// Storage keys must be ASCII (Supabase answers InvalidKey to "Aziyadé"): fold the
+// accents away (é → e, İ → I) and swap anything still outside ASCII for a hyphen.
 const safeName = (name) => Array.from(String(name ?? '')).filter((c) => c.charCodeAt(0) >= 32).join('')
+  .normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7e]/g, '-')
   .replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(-120) || 'book.pdf';
 
 // ---------------------------------------------------------------------------
