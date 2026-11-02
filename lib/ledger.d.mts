@@ -25,7 +25,10 @@ export type LedgerEventKind =
   | 'ai.paused'
   | 'ai.resumed'
   | 'run.aborted'
-  // 100 — the Brief Desk (094's kinds are written only from lib/, untyped here)
+  // 094 — the security build (the ones src/ writes; the rest stay lib/-only)
+  | 'file.filed'
+  | 'file.opened'
+  // 100 — the Brief Desk
   | 'draft.snapshot'
   | 'cite.checked'
   | 'draft.exported'

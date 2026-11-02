@@ -1,29 +1,32 @@
-// The Word task pane (docs/specs/WORD-ADDIN-2026-11-01.md, slice 1).
+// The Word task pane (docs/specs/WORD-ADDIN-2026-11-01.md, and
+// docs/specs/WORD-ROUNDTRIP-2026-11-01.md for the document itself).
 //
-// One screen: sign in → the matter the brief draws on → Confirm this brief →
-// the cite rows. A row click selects the cite in the Word document; an open
-// row shows where the matter has the authority, takes Confirm / Problem with
-// initials (the Desk's cite_confirmations row, unchanged), and offers — only
-// on a click — a Word comment recording the reading. The brief itself is a
-// Desk brief in the matter: the first Confirm files it, every later Confirm
-// saves the document's words to it and runs the Desk pipeline, so the Desk
-// and this pane read the same runs, snapshots and log.
+// One screen. The document names its Equazia document through a tag in the
+// file (docx-tag.ts); a document without one is "not in Equazia yet" and the
+// first Save to Equazia files it in the chosen matter. Every Save stores the
+// .docx as Word has it, as a new version (document-versions.ts). Confirm this
+// brief runs the Desk pipeline on the words Word has now: rows, a click that
+// selects the cite in the document, Confirm / Problem with initials (the
+// Desk's cite_confirmations row, unchanged), and — only on a click — a Word
+// comment recording the reading. Confirm never files anything.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, AlertTriangle, ExternalLink, Loader2, LogOut, MessageSquarePlus, MessageSquareX, RefreshCw, Stamp, Search, FileText } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, ExternalLink, Loader2, LogOut, MessageSquarePlus, MessageSquareX, RefreshCw, Stamp, Search, FileText, Save, History } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import MatterTreePick from '@/components/matters/MatterTreePick';
 import { importBytes } from '@/lib/brief/import';
-import { importBriefFile, loadBrief, saveBody, createBody, loadBriefBody, type BriefMeta } from '@/lib/brief/draft-store';
+import { loadBrief, saveBody, createBody, type BriefMeta } from '@/lib/brief/draft-store';
 import { confirmBrief, loadLatestRun, type DeskRun, type ConfirmProgress } from '@/lib/brief/confirm';
 import { toPlainText, type BriefDoc } from '@/lib/brief/md';
 import { addConfirmation, loadConfirmations, latestFor, rememberedInitials, rememberInitials, type CiteConfirmation, type ConfirmationStatus } from '@/lib/brief/confirmations';
 import { isLeaseMissing, type LeaseRow } from '@/lib/brief/edit-lease-core';
 import { FLAG_GLYPH, FLAG_LABEL, type CiteFlag } from '@/lib/cite-check/types';
 import type { DeskEntry } from '@/lib/brief/anchor';
+import { listVersions, nextVersionLabel, saveDocxVersion, createDocxDocument, type DocumentVersion } from '@/lib/document-versions';
 import { connect, type DocBridge } from './office';
 
+/** Pre-tag files (slice 1) kept the brief's id in an Office setting; still read. */
 const SETTING_BRIEF = 'equazia.briefId';
 const SETTING_MATTER = 'equazia.matterId';
 const COMMENT_PREFIX = 'Equazia ·';
@@ -105,7 +108,7 @@ export default function AddinPane() {
         <Centered>
           <FileText size={22} className="text-white/25" />
           <p className="text-[13px] text-white/70 mt-3 max-w-xs leading-relaxed">
-            This page is the Equazia task pane for Word. Open it inside Word: Home tab → <b>Confirm this brief</b>.
+            This page is the Equazia pane for Word. Open it inside Word: Home tab → <b>Equazia</b>.
           </p>
           <p className="text-[11px] text-white/40 mt-3 max-w-xs">To install it: in Word, Home → Add-ins → More Add-ins → My Add-ins → Upload My Add-in, and choose the manifest saved from <span className="text-white/60">www.equazia.ai/addin/manifest.xml</span>.</p>
         </Centered>
@@ -169,7 +172,7 @@ function SignIn({ onSignIn }: { onSignIn: (email: string, password: string) => P
 }
 
 // ---------------------------------------------------------------------------
-// The pane proper
+// The pane
 // ---------------------------------------------------------------------------
 
 interface Row {
@@ -181,20 +184,26 @@ interface Row {
   reading: CiteConfirmation | null;
 }
 
+type Busy = 'save' | 'confirm' | null;
+
 function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: string; onSignOut: () => void }) {
+  /** The Equazia document this file is (the tag, else the older setting). */
+  const [docId, setDocId] = useState<string | null>(null);
+  const [identified, setIdentified] = useState(false);
   const [matterId, setMatterId] = useState<string | null>(() => bridge.getSetting(SETTING_MATTER));
-  const [briefId, setBriefId] = useState<string | null>(() => bridge.getSetting(SETTING_BRIEF));
   const [meta, setMeta] = useState<BriefMeta | null>(null);
+  const [versions, setVersions] = useState<DocumentVersion[]>([]);
+  const [label, setLabel] = useState('v.1');
   const [run, setRun] = useState<DeskRun | null>(null);
   const [plain, setPlain] = useState('');
   const [readings, setReadings] = useState<CiteConfirmation[]>([]);
   const [progress, setProgress] = useState<ConfirmProgress | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [lease, setLease] = useState<{ holder: string; since: string } | null>(null);
-  /** The brief this document names could not be opened: why, in words. */
-  const [briefLost, setBriefLost] = useState<string | null>(null);
+  /** The document this file names could not be opened: why, in words. */
+  const [docLost, setDocLost] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [initials, setInitials] = useState(() => rememberedInitials() ?? '');
   const [mockFile, setMockFile] = useState<string | null>(null);
@@ -202,46 +211,102 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
   const tabRef = useRef<string>(crypto.randomUUID());
   const origin = window.location.origin;
 
-  // A brief this document already names: its last run and its log.
+  // Which Equazia document this is: the tag in the file, else the setting a
+  // slice-1 file carries. Asked once, and again in the mock when a file is chosen.
+  const identify = useCallback(async () => {
+    try {
+      const tag = await bridge.readTag();
+      const id = tag?.documentId ?? bridge.getSetting(SETTING_BRIEF);
+      setDocId(id);
+      if (tag?.matterId) setMatterId(tag.matterId);
+    } catch (e) {
+      console.warn('[addin] tag not read:', e);
+    } finally {
+      setIdentified(true);
+    }
+  }, [bridge]);
+  useEffect(() => { void identify(); }, [identify]);
+
+  const loadDocument = useCallback(async (id: string) => {
+    const { meta: m, body } = await loadBrief(id);
+    const [r, c, v] = await Promise.all([loadLatestRun(id), loadConfirmations(id), listVersions(id)]);
+    setMeta(m);
+    setRun(r);
+    setReadings(c);
+    setVersions(v);
+    setLabel(nextVersionLabel(v, !!m.storage_path));
+    setPlain(body ? toPlainText(body.body) : '');
+    if (m.matterspace_id) setMatterId(m.matterspace_id);
+  }, []);
+
+  // The document this file names: its row, versions, last run and log.
   useEffect(() => {
-    setBriefLost(null);
-    if (!briefId) { setMeta(null); setRun(null); setReadings([]); setPlain(''); return; }
+    setDocLost(null);
+    if (!docId) { setMeta(null); setRun(null); setReadings([]); setVersions([]); setPlain(''); setLabel('v.1'); return; }
     let live = true;
-    void (async () => {
-      try {
-        const { meta: m } = await loadBrief(briefId);
-        const [r, c, body] = await Promise.all([loadLatestRun(briefId), loadConfirmations(briefId), loadBriefBody(briefId)]);
-        if (!live) return;
-        setMeta(m);
-        setRun(r);
-        setReadings(c);
-        setPlain(toPlainText(body));
-        if (m.matterspace_id && !matterId) setMatterId(m.matterspace_id);
-      } catch (e) {
-        if (!live) return;
-        // Someone this matter is not shared with opened a shared .docx, the
-        // brief is gone, or the network blinked. The document keeps its brief
-        // id either way: detaching is the person's choice, below.
-        setMeta(null);
-        setBriefLost((e as Error).message);
-      }
-    })();
+    void loadDocument(docId).catch((e) => {
+      if (!live) return;
+      // Someone this matter is not shared with opened a shared .docx, the
+      // document is gone, or the network blinked. The file keeps its tag
+      // either way: detaching is the person's choice, below.
+      setMeta(null);
+      setDocLost((e as Error).message);
+    });
     return () => { live = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [briefId]);
+  }, [docId, loadDocument]);
 
   // Release the edit hold when the pane goes.
   useEffect(() => {
-    const release = () => { if (briefId) void supabase.rpc('release_brief_edit', { p_document_id: briefId, p_tab: tabRef.current }); };
+    const release = () => { if (docId) void supabase.rpc('release_brief_edit', { p_document_id: docId, p_tab: tabRef.current }); };
     window.addEventListener('pagehide', release);
     return () => { window.removeEventListener('pagehide', release); release(); };
-  }, [briefId]);
+  }, [docId]);
 
   const pickMatter = useCallback((id: string) => {
     setMatterId(id);
     setError(null);
     void bridge.setSetting(SETTING_MATTER, id);
   }, [bridge]);
+
+  const documentName = useCallback(async () => {
+    const name = (await bridge.fileName()) ?? 'Document from Word.docx';
+    return /\.docx$/i.test(name) ? name : `${name}.docx`;
+  }, [bridge]);
+
+  /** Mark the live document with its Equazia id (a copy keeps it). Older Word: the setting. */
+  const tagDocument = useCallback(async (id: string, matter: string | null) => {
+    let ok = false;
+    try { ok = await bridge.writeTag({ documentId: id, matterId: matter }); } catch { ok = false; }
+    if (!ok) await bridge.setSetting(SETTING_BRIEF, id);
+  }, [bridge]);
+
+  // -- Save to Equazia -------------------------------------------------------
+  const save = useCallback(async () => {
+    const lbl = label.trim();
+    if (!lbl) { setError('Give the version a label: v.2, as sent, …'); return; }
+    if (!docId && !matterId) { setError('Choose the matter this document belongs in first.'); return; }
+    if (docLost) { setError('Open the document this file names first (Try again), or save it as a new document.'); return; }
+    setError(null); setNotice(null); setBusy('save');
+    try {
+      const bytes = await bridge.getDocxBytes();
+      const filename = await documentName();
+      let id = docId;
+      if (id) {
+        await saveDocxVersion({ documentId: id, bytes, filename, label: lbl });
+      } else {
+        const r = await createDocxDocument({ matterId: matterId!, bytes, filename, label: lbl });
+        id = r.documentId;
+      }
+      await tagDocument(id, matterId);
+      setDocId(id);
+      await loadDocument(id);
+      setNotice(`Saved to Equazia as ${lbl}.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [label, docId, matterId, docLost, bridge, documentName, tagDocument, loadDocument]);
 
   /** Claim the Desk's edit hold (105). Returns null when it is ours or the hold is not deployed; else who has it. */
   const claimHold = useCallback(async (id: string, force: boolean): Promise<{ holder: string; since: string } | null> => {
@@ -253,76 +318,60 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
     return { holder: row.holder_name || 'someone', since: row.claimed_at };
   }, [userEmail]);
 
+  // -- Confirm this brief ----------------------------------------------------
   const confirm = useCallback(async (opts: { all: boolean; force?: boolean }) => {
-    if (!matterId) { setError('Choose the matter this brief draws on first.'); return; }
-    if (briefLost) { setError('Open the brief this document names first (Try again), or file it as a new brief.'); return; }
-    setError(null); setNotice(null); setLease(null); setBusy(true);
+    if (!docId) { setError('Save to Equazia first: Confirm works on a document in a matter.'); return; }
+    if (docLost) { setError('Open the document this file names first (Try again), or save it as a new document.'); return; }
+    setError(null); setNotice(null); setLease(null); setBusy('confirm');
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      setProgress({ phase: 'snapshot' });
+      setProgress({ phase: 'extracting' });
       const bytes = await bridge.getDocxBytes();
-      const name = (await bridge.fileName()) ?? 'Brief from Word.docx';
-      const fileName = /\.docx$/i.test(name) ? name : `${name}.docx`;
+      const filename = await documentName();
 
-      let id = briefId;
-      let m: BriefMeta;
-      let body: BriefDoc;
-      if (!id) {
-        // First Confirm from this document: file the brief in the matter, the
-        // Desk's own way (documents row, body, first snapshot, the .docx beside it).
-        const file = new File([bytes as BlobPart], fileName, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-        const r = await importBriefFile(matterId, file);
-        id = r.id;
-        await bridge.setSetting(SETTING_BRIEF, id);
-        const loaded = await loadBrief(id);
-        m = loaded.meta;
-        body = await loadBriefBody(id);
-        if (r.losses.length) setNotice(`Filed in the matter as “${m.title}”. Not carried into the Equazia copy: ${r.losses.join(' ')}`);
-      } else {
-        // Later Confirms: the document's words become the brief's current body.
-        const who = await claimHold(id, !!opts.force);
-        if (who) { setLease(who); return; }
-        const { doc } = await importBytes(fileName, bytes);
-        const loaded = await loadBrief(id);
-        m = loaded.meta;
-        if (loaded.body) {
-          let res = await saveBody(id, doc, loaded.body.updated_at);
-          if (!res.ok && res.conflict) {
-            // Someone saved between the read and the write: Word's words are the ones being confirmed; save again on the fresh stamp.
-            const again = await loadBrief(id);
-            if (again.body) res = await saveBody(id, doc, again.body.updated_at);
-          }
-          if (!res.ok) throw new Error(('error' in res && res.error) || 'The brief could not be saved.');
-        } else {
-          await createBody(id, doc);
+      // The document's words, as Word has them now, become the Desk body the
+      // pipeline reads (its scratch for the run; the .docx stays the document).
+      const who = await claimHold(docId, !!opts.force);
+      if (who) { setLease(who); return; }
+      const { doc } = await importBytes(filename, bytes);
+      const loaded = await loadBrief(docId);
+      const m = loaded.meta;
+      if (loaded.body) {
+        let res = await saveBody(docId, doc, loaded.body.updated_at);
+        if (!res.ok && res.conflict) {
+          // Someone saved between the read and the write: Word's words are the ones being confirmed; save again on the fresh stamp.
+          const again = await loadBrief(docId);
+          if (again.body) res = await saveBody(docId, doc, again.body.updated_at);
         }
-        body = doc;
+        if (!res.ok) throw new Error(('error' in res && res.error) || 'The words could not be saved for checking.');
+      } else {
+        await createBody(docId, doc);
       }
-      setBriefId(id);
+      const body: BriefDoc = doc;
       setMeta(m);
       setPlain(toPlainText(body));
 
-      const prior = await loadLatestRun(id);
+      const prior = await loadLatestRun(docId);
       const outcome = await confirmBrief({
         meta: m, body, prior, stalePairs: new Set(), all: opts.all,
-        onProgress: setProgress, signal: ac.signal, recordMatterId: matterId,
+        onProgress: setProgress, signal: ac.signal, recordMatterId: m.matterspace_id,
       });
       setRun(outcome.run);
-      setReadings(await loadConfirmations(id));
+      setReadings(await loadConfirmations(docId));
       const bits = [`${outcome.checked} checked`];
       if (outcome.carried) bits.push(`${outcome.carried} carried forward`);
       if (outcome.dropped) bits.push(`${outcome.dropped} no longer in the brief`);
-      setNotice((n) => [n, `Done: ${bits.join(', ')}.`].filter(Boolean).join(' '));
+      setNotice(`Done: ${bits.join(', ')}.`);
     } catch (e) {
       if ((e as Error).name === 'AbortError') setNotice('Stopped.');
       else setError((e as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
       setProgress(null);
       abortRef.current = null;
     }
-  }, [bridge, briefId, matterId, claimHold, briefLost]);
+  }, [bridge, docId, docLost, claimHold, documentName]);
 
   const rows: Row[] = useMemo(() => {
     if (!run) return [];
@@ -351,14 +400,14 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
   }, [bridge]);
 
   const sign = useCallback(async (r: Row, status: ConfirmationStatus, note: string, comment: boolean) => {
-    if (!briefId) return;
+    if (!docId) return;
     const ini = initials.trim().toUpperCase().slice(0, 6);
     if (!ini) { setError('Initials are needed: the log records who read the page.'); return; }
     rememberInitials(ini);
     setError(null);
     try {
       const row = await addConfirmation({
-        document_id: briefId, cite_raw: r.raw, context: r.context, pm_from: null,
+        document_id: docId, cite_raw: r.raw, context: r.context, pm_from: null,
         authority_document_id: r.found.docId, authority_title: r.found.title, authority_page: r.found.page,
         status, note, initials: ini,
       });
@@ -371,7 +420,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
         if (!ok) setSelectNote('The reading is in the log; the Word comment could not be placed (the words were not found).');
       }
     } catch (e) { setError((e as Error).message); }
-  }, [briefId, initials, bridge]);
+  }, [docId, initials, bridge]);
 
   /** A Word comment carrying the latest reading in the log — no new log row. */
   const commentOnly = useCallback(async (r: Row) => {
@@ -393,8 +442,11 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
     } catch (e) { setSelectNote(`Word could not remove it: ${(e as Error).message}`); }
   }, [bridge]);
 
-  // The button stays bright; what it still needs is said under it, not by dimming it.
-  const needs = !matterId ? 'Choose the matter this brief draws on above.' : (bridge.kind === 'mock' && !mockFile ? 'Mock Word: choose a .docx above.' : null);
+  // The buttons stay bright; what they still need is said under them.
+  const needsFile = bridge.kind === 'mock' && !mockFile ? 'Mock Word: choose a .docx above.' : null;
+  const saveNeeds = needsFile ?? (!docId && !matterId ? 'Choose the matter this document belongs in above.' : null);
+  const confirmNeeds = needsFile ?? (!docId ? 'Save to Equazia first; Confirm checks a document in a matter.' : null);
+  const latest = versions[0] ?? null;
 
   return (
     <>
@@ -411,53 +463,80 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
         {bridge.kind === 'mock' && (
           <div className="rounded-md border border-amber-400/30 bg-amber-400/10 p-2 text-[11px] text-amber-100">
             <div className="font-medium mb-1">Mock Word</div>
-            <input type="file" accept=".docx" onChange={(e) => { const f = e.target.files?.[0]; if (f) { bridge.mockSetFile?.(f); setMockFile(f.name); } }} className="text-[11px]" />
+            <input type="file" accept=".docx" onChange={(e) => { const f = e.target.files?.[0]; if (f) { bridge.mockSetFile?.(f); setMockFile(f.name); void identify(); } }} className="text-[11px]" />
             {mockFile && <div className="mt-1 text-amber-200/80">{mockFile}</div>}
           </div>
         )}
 
-        {/* Matter */}
-        <section>
-          <div className="text-[10.5px] uppercase tracking-wider text-white/40 mb-1">The matter this brief draws on</div>
-          <MatterTreePick value={matterId} onChange={pickMatter} collapsible maxHeight={220} />
+        {/* The document */}
+        <section className="space-y-1.5">
+          <div className="text-[10.5px] uppercase tracking-wider text-white/40">This document</div>
+          {!identified ? (
+            <p className="text-[11.5px] text-white/40">Reading the document…</p>
+          ) : docId && meta ? (
+            <div className="rounded-md border border-white/[0.08] bg-white/[0.03] p-2 text-[11.5px] space-y-1">
+              <div className="flex items-center gap-2 text-white/60">
+                <Stamp size={12} className="text-white/35 shrink-0" />
+                <span className="truncate">In Equazia as <span className="text-white/85">{meta.title}</span></span>
+                <button onClick={() => bridge.openUrl(`${origin}/app/document/${meta.id}`)} title="Open in Equazia" className="ml-auto text-white/45 hover:text-white shrink-0"><ExternalLink size={12} /></button>
+              </div>
+              <div className="flex items-center gap-2 text-white/45">
+                <History size={12} className="text-white/30 shrink-0" />
+                {latest
+                  ? <span className="truncate">Latest {latest.label} · {localDate(new Date(latest.created_at))}{versions.length > 1 ? ` · ${versions.length} versions` : ''}</span>
+                  : <span>No versions saved from Word yet{meta.storage_path ? ' (the filed original is v.1)' : ''}.</span>}
+              </div>
+            </div>
+          ) : docId && docLost ? null : (
+            <>
+              <p className="text-[11.5px] text-white/55 leading-snug">Not in Equazia yet. Choose the matter it belongs in; the first Save files it there.</p>
+              <MatterTreePick value={matterId} onChange={pickMatter} collapsible maxHeight={220} />
+            </>
+          )}
+          {docLost && (
+            <div className="rounded-md border border-amber-400/30 bg-amber-400/10 p-2 text-[11.5px] text-amber-100">
+              <AlertTriangle size={12} className="inline mr-1 -mt-0.5" />
+              This file names a document in Equazia that could not be opened from this account ({docLost}). Try again, or save it as a new document.
+              <div className="mt-1.5 flex gap-2">
+                <button onClick={() => { const id = docId; setDocId(null); setTimeout(() => setDocId(id), 0); }} className="rounded border border-amber-300/40 px-2 py-0.5 text-[11px]">Try again</button>
+                <button onClick={() => { setDocId(null); void bridge.setSetting(SETTING_BRIEF, null); }} className="text-[11px] text-amber-100/70 hover:text-white">Save as a new document</button>
+              </div>
+            </div>
+          )}
         </section>
 
-        {/* Brief */}
-        {meta && (
-          <div className="flex items-center gap-2 text-[11.5px] text-white/60">
-            <Stamp size={12} className="text-white/35 shrink-0" />
-            <span className="truncate">In Equazia as <span className="text-white/85">{meta.title}</span></span>
-            <button onClick={() => bridge.openUrl(`${origin}/app/brief/${meta.id}`)} title="Open in Equazia" className="ml-auto text-white/45 hover:text-white shrink-0"><ExternalLink size={12} /></button>
+        {/* Save to Equazia */}
+        <section className="space-y-1.5">
+          <div className="flex gap-1.5">
+            <input value={label} onChange={(e) => setLabel(e.target.value.slice(0, 80))} placeholder="v.2" title="The version's label"
+              className="w-20 rounded-md bg-white/[0.06] border border-white/10 px-2 text-[12.5px] outline-none focus:border-primary/60" />
+            <button onClick={() => void save()} disabled={busy !== null}
+              className="flex-1 rounded-md bg-primary text-black font-medium py-2 text-[13px] disabled:opacity-60 flex items-center justify-center gap-1.5">
+              {busy === 'save' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save to Equazia
+            </button>
           </div>
-        )}
-
-        {briefLost && (
-          <div className="rounded-md border border-amber-400/30 bg-amber-400/10 p-2 text-[11.5px] text-amber-100">
-            <AlertTriangle size={12} className="inline mr-1 -mt-0.5" />
-            This document names a brief in Equazia that could not be opened from this account ({briefLost}). Try again, or file the document as a new brief in the matter above.
-            <div className="mt-1.5 flex gap-2">
-              <button onClick={() => { const id = briefId; setBriefId(null); setTimeout(() => setBriefId(id), 0); }} className="rounded border border-amber-300/40 px-2 py-0.5 text-[11px]">Try again</button>
-              <button onClick={() => { setBriefId(null); void bridge.setSetting(SETTING_BRIEF, null); }} className="text-[11px] text-amber-100/70 hover:text-white">File as a new brief</button>
-            </div>
-          </div>
-        )}
+          {!busy && saveNeeds && <p className="text-[11px] text-white/50 leading-snug">{saveNeeds}</p>}
+          {!busy && !saveNeeds && (
+            <p className="text-[11px] text-white/40 leading-snug">Stores the document exactly as Word has it, as {docId ? `version ${label.trim() || '…'}` : 'a new document in the matter'}. Nothing in the document is changed.</p>
+          )}
+        </section>
 
         {/* Confirm */}
         <section className="space-y-1.5">
           <div className="flex gap-1.5">
-            <button onClick={() => void confirm({ all: false })} disabled={busy}
-              className="flex-1 rounded-md bg-primary text-black font-medium py-2 text-[13px] disabled:opacity-60 flex items-center justify-center gap-1.5">
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Confirm this brief
+            <button onClick={() => void confirm({ all: false })} disabled={busy !== null}
+              className="flex-1 rounded-md border border-primary/60 text-primary font-medium py-2 text-[13px] disabled:opacity-60 flex items-center justify-center gap-1.5 hover:bg-primary/10">
+              {busy === 'confirm' ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Confirm this brief
             </button>
             {run && !busy && (
-              <button onClick={() => void confirm({ all: true })} disabled={busy} title="Re-check all: ignore the last run"
-                className="rounded-md border border-white/15 px-2 text-white/60 hover:text-white disabled:opacity-40"><RefreshCw size={13} /></button>
+              <button onClick={() => void confirm({ all: true })} title="Re-check all: ignore the last run"
+                className="rounded-md border border-white/15 px-2 text-white/60 hover:text-white"><RefreshCw size={13} /></button>
             )}
-            {busy && (
+            {busy === 'confirm' && (
               <button onClick={() => abortRef.current?.abort()} className="rounded-md border border-white/15 px-2.5 text-[12px] text-white/70 hover:text-white">Stop</button>
             )}
           </div>
-          {!busy && needs && <p className="text-[11px] text-white/50 leading-snug">{needs}</p>}
+          {!busy && confirmNeeds && <p className="text-[11px] text-white/50 leading-snug">{confirmNeeds}</p>}
           {progress && <p className="text-[11px] text-white/55 leading-snug">{progressLine(progress)}</p>}
           {lease && (
             <div className="rounded-md border border-amber-400/30 bg-amber-400/10 p-2 text-[11.5px] text-amber-100">
@@ -511,7 +590,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
                     </div>
                   </button>
                   {open === r.key && (
-                    <RowDetail r={r} bridge={bridge} origin={origin} briefId={briefId} note={selectNote}
+                    <RowDetail r={r} bridge={bridge} origin={origin} briefId={docId} note={selectNote}
                       onSign={(status, note, comment) => void sign(r, status, note, comment)} onComment={() => void commentOnly(r)} onRemoveComments={() => void removeComments(r)} />
                   )}
                 </li>
@@ -520,7 +599,7 @@ function Pane({ bridge, userEmail, onSignOut }: { bridge: DocBridge; userEmail: 
           </section>
         )}
 
-        {!run && !busy && matterId && (
+        {!run && !busy && docId && !docLost && (
           <p className="text-[11.5px] text-white/40 leading-relaxed">
             Confirm walks every citation in this document, finds each authority in the matter, and lists them here. Nothing in the document is changed.
           </p>

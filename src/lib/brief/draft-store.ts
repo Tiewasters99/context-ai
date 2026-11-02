@@ -102,6 +102,17 @@ export async function hasDraftBody(documentId: string): Promise<boolean> {
   return !error && !!data;
 }
 
+/**
+ * Does the Reader send this document to the Desk? A document with a body,
+ * unless Word is its editor (WORD-ROUNDTRIP): then the .docx is the document
+ * and the Reader renders it, the body being Confirm's scratch.
+ */
+export async function opensOnDesk(documentId: string): Promise<boolean> {
+  const { data } = await supabase.from('documents').select('editor:metadata->>editor').eq('id', documentId).maybeSingle();
+  if ((data as { editor?: string | null } | null)?.editor === 'word') return false;
+  return hasDraftBody(documentId);
+}
+
 // ---------------------------------------------------------------------------
 // Create and save
 // ---------------------------------------------------------------------------
@@ -179,6 +190,10 @@ export async function takeSnapshot(
   await recordEvent('draft.snapshot', meta.matterspace_id, {
     document_id: meta.id, snapshot_id: snap.id, sha256: snap.sha256, label: snap.label,
   });
+  // A document whose editor is Word (docs/specs/WORD-ROUNDTRIP-2026-11-01.md)
+  // is published by its own Save to Equazia: the .docx is the document, and
+  // this snapshot stays the record of the words a run checked.
+  if ((meta.metadata ?? {}).editor === 'word') return { ...snap, body_md, published: true };
   try {
     await publishSnapshot(meta, snap.id, body_md);
     return { ...snap, body_md, published: true };

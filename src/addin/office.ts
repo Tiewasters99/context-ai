@@ -8,6 +8,8 @@
 // localStorage. tsc and the mock are how this is tested here; Word itself is
 // Eden's trip (C:\Users\equai\WORD-ADDIN-INSTALL-2026-11-01.txt).
 
+import { readDocxTag, writeDocxTag, tagFromProps, TAG_DOCUMENT, TAG_MATTER, type DocxTag } from '@/lib/docx-tag';
+
 export type HostKind = 'word' | 'mock' | 'none';
 
 export interface DocBridge {
@@ -21,6 +23,10 @@ export interface DocBridge {
   /** Remove every comment on these words whose text starts with `prefix` (ours). Returns how many went. */
   removeComments(words: string, prefix: string): Promise<number>;
   canComment: boolean;
+  /** The Equazia tag in the document's custom properties (docx-tag.ts), or null. */
+  readTag(): Promise<DocxTag | null>;
+  /** Write the tag into the live document. False when this Word cannot (WordApi 1.3 missing). */
+  writeTag(tag: DocxTag): Promise<boolean>;
   /** Per-document settings, saved inside the file (Office.context.document.settings). */
   getSetting(name: string): string | null;
   setSetting(name: string, value: string | null): Promise<void>;
@@ -124,6 +130,7 @@ function getFileSlices(file: Office.File): Promise<Uint8Array> {
 function wordBridge(): DocBridge {
   const settings = Office.context.document.settings;
   const canComment = Office.context.requirements.isSetSupported('WordApi', '1.4');
+  const canProps = Office.context.requirements.isSetSupported('WordApi', '1.3');
   const saveSettings = () => new Promise<void>((resolve) => settings.saveAsync(() => resolve()));
 
   return {
@@ -184,6 +191,25 @@ function wordBridge(): DocBridge {
         return gone;
       });
     },
+    readTag: () => {
+      if (!canProps) return Promise.resolve(null);
+      return Word.run(async (ctx) => {
+        const props = ctx.document.properties.customProperties;
+        props.load('items/key,items/value');
+        await ctx.sync();
+        return tagFromProps(new Map(props.items.map((p) => [p.key, String(p.value ?? '')])));
+      });
+    },
+    writeTag: (tag) => {
+      if (!canProps) return Promise.resolve(false);
+      return Word.run(async (ctx) => {
+        const props = ctx.document.properties.customProperties;
+        props.add(TAG_DOCUMENT, tag.documentId);
+        if (tag.matterId) props.add(TAG_MATTER, tag.matterId);
+        await ctx.sync();
+        return true;
+      });
+    },
     openUrl: (url) => {
       try {
         const ui = Office.context.ui as unknown as { openBrowserWindow?: (u: string) => void };
@@ -231,6 +257,14 @@ function mockBridge(): DocBridge {
     getDocxBytes: async () => {
       if (!file) throw new Error('Mock: choose a .docx first.');
       return new Uint8Array(await file.arrayBuffer());
+    },
+    readTag: async () => (file ? readDocxTag(new Uint8Array(await file.arrayBuffer())) : null),
+    writeTag: async (tag) => {
+      if (!file) return false;
+      const tagged = await writeDocxTag(new Uint8Array(await file.arrayBuffer()), tag);
+      file = new File([tagged as BlobPart], file.name, { type: file.type });
+      console.log('[mock Word] tagged the document', tag);
+      return true;
     },
     selectText: async (words) => { console.log('[mock Word] select', searchWindow(words)); return 1; },
     addComment: async (words, text) => { console.log('[mock Word] comment on', searchWindow(words), '→', text); return true; },

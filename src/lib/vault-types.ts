@@ -48,6 +48,9 @@ export interface VaultFile {
   /** Persistent mode: the cover chosen for the document (documents.cover_url),
    *  drawn small beside the title. Absent when none was chosen. */
   coverUrl?: string;
+  /** Persistent mode: the latest version's label when the document is
+   *  written in Word (documents.metadata.version_label), "v.2". */
+  versionLabel?: string;
   /** Persistent mode: pages a ready PDF still owes OCR, with the reason and
    *  the retry state (documents.metadata.ocr_pending). Present beside real
    *  passages — "Ready — 3 pages awaiting OCR" — or beside textStatus
