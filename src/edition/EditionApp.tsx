@@ -703,6 +703,7 @@ function WeeklyCard({ week, navigate }: { week: Week; navigate: (to: string) => 
 }
 
 function SpotlightCard({ navigate }: { navigate: (to: string) => void }) {
+  const plate = SPOTLIGHT.images.find((im) => im.merch !== false) ?? null;
   return (
     <section className="mt-8">
       <button
@@ -710,10 +711,24 @@ function SpotlightCard({ navigate }: { navigate: (to: string) => void }) {
         style={{ background: 'rgba(0,0,0,0.28)', boxShadow: 'inset 0 0 0 1px rgba(217,189,122,0.45)' }}
         onClick={() => navigate('/how')}
       >
-        <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'rgba(217,189,122,0.75)' }}>How it works</div>
-        <div className="mt-2" style={{ fontFamily: SERIF, fontSize: 30, fontWeight: 600, color: GOLD, lineHeight: 1.1 }}>A Spotlight on <em>{SPOTLIGHT.work}</em></div>
-        <div className="mt-4 inline-flex items-center gap-2 text-[14px] underline underline-offset-4" style={{ color: GOLD }}>
-          See it <ChevronRight size={15} />
+        <div className="flex items-center gap-5 sm:gap-8">
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'rgba(217,189,122,0.75)' }}>How it works</div>
+            <div className="mt-2" style={{ fontFamily: SERIF, fontSize: 30, fontWeight: 600, color: GOLD, lineHeight: 1.1 }}>A Spotlight on <em>{SPOTLIGHT.work}</em></div>
+            {SPOTLIGHT.author && <div className="mt-1" style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 16, color: 'rgba(233,214,160,0.8)' }}>{SPOTLIGHT.author}</div>}
+            <div className="mt-4 inline-flex items-center gap-2 text-[14px] underline underline-offset-4" style={{ color: GOLD }}>
+              See it <ChevronRight size={15} />
+            </div>
+          </div>
+          {SPOTLIGHT.slug && plate && (
+            <img
+              src={spotlightImageUrl(SPOTLIGHT.slug, plate.display ?? plate.file)}
+              alt=""
+              loading="lazy"
+              className="w-24 shrink-0 rounded-sm sm:w-36"
+              style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }}
+            />
+          )}
         </div>
       </button>
     </section>
@@ -787,17 +802,39 @@ const SPOTLIGHT: {
   editionId: string | null;
   /** The folder under cover-images/spotlight/. */
   slug: string | null;
-  images: Array<{ file: string; caption?: string }>;
+  /** The pictures: `file` is the full-size original (the copy the print shop gets);
+   *  `display`, when given, is the lighter copy the page shows. `merch: false` keeps a
+   *  picture off the garments (a screenshot of the Reader, say). */
+  images: Array<{ file: string; display?: string; caption?: string; merch?: boolean }>;
   video: string | null;
-  copy: string[];
+  intro: string[];
+  /** How it works, one step at a time; `image` names a file in `images`. */
+  steps: Array<{ title: string; text: string; image?: string }>;
 } = {
-  work: null,
-  author: null,
-  editionId: null,
-  slug: null,
-  images: [],
+  work: 'Kunstformen der Natur',
+  author: 'Ernst Haeckel, 1899–1904',
+  editionId: '550d6557-7df9-4809-87ea-c20d16917ee9',
+  slug: 'kunstformen-der-natur',
+  images: [
+    { file: 'tafel-2-thalamophora.png', display: 'tafel-2-thalamophora.jpg', caption: 'Tafel 2. Thalamophora — Kammerlinge: the foraminifera.' },
+    { file: 'orchestrator-answer.png', caption: 'The Orchestrator, asked about Tafel 5.', merch: false },
+    { file: 'tafel-5-calcispongiae.png', display: 'tafel-5-calcispongiae.jpg', caption: 'Tafel 5. Calcispongiae — Kalkschwämme: the calcareous sponges.' },
+  ],
   video: null,
-  copy: [],
+  intro: [
+    'Ernst Haeckel drew these plates between 1899 and 1904: a hundred of them, radiolarians and jellyfish, sponges and orchids, each page arranged like a jeweller’s tray. The book has been in and out of print for a century and in copyright for none of it. It is in the Library, cleaned, in two volumes.',
+    'Here is what the Reader does with it.',
+  ],
+  steps: [
+    { title: 'Open the book', image: 'tafel-2-thalamophora.png',
+      text: 'The scan is cleaned page by page and shown at the size it was printed. Turn to Tafel 2 and the foraminifera stand out of the black ground as they did in 1899.' },
+    { title: 'Ask', image: 'orchestrator-answer.png',
+      text: 'The Orchestrator reads the page you are on. Ask what you are looking at and the answer arrives beside the plate, in the length you asked for: here, a hundred and fifty words on the calcareous sponges of Tafel 5.' },
+    { title: 'Snip it, bench it, take it further', image: 'tafel-5-calcispongiae.png',
+      text: 'Draw a box around a plate, or a detail of one, and it goes to the Workbench. From the bench, one click copies the picture and opens Midjourney, Runway, Flow, Grok or ChatGPT. Paste, and the plate is yours to work on.' },
+    { title: 'Wear it',
+      text: 'Any picture from a public-domain work can go on a tee, a tote or a print. Choose the garment, see it mocked up with the plate in place, pay, and the print shop makes it and ships it to you.' },
+  ],
 };
 
 function spotlightImageUrl(slug: string, file: string): string {
@@ -834,6 +871,28 @@ function Spotlight({ session, navigate }: { session: Session; navigate: (to: str
     });
   };
 
+  const picture = (file: string) => s.images.find((im) => im.file === file) ?? null;
+  const figure = (im: NonNullable<ReturnType<typeof picture>>) => (
+    <figure>
+      <img
+        src={spotlightImageUrl(s.slug!, im.display ?? im.file)}
+        alt={im.caption ?? ''}
+        loading="lazy"
+        className="w-full rounded-sm"
+        style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }}
+      />
+      {im.caption && <figcaption className="mt-2 text-[13px]" style={{ fontFamily: SERIF, fontStyle: 'italic', color: 'rgba(233,214,160,0.75)' }}>{im.caption}</figcaption>}
+      {merchReady && im.merch !== false && (
+        <button className={`${goldQuiet} mt-2`} style={goldQuietStyle} onClick={() => putOnMerch(im.file)}>
+          <Shirt size={14} /> On a tee, a tote or a print
+        </button>
+      )}
+    </figure>
+  );
+  const shown = new Set(s.steps.map((st) => st.image).filter(Boolean));
+  const rest = s.slug ? s.images.filter((im) => !shown.has(im.file)) : [];
+  const prose = { fontFamily: SERIF, fontSize: 19, lineHeight: 1.55, color: 'rgba(241,227,184,0.94)' } as const;
+
   return (
     <ClothPage session={session} navigate={navigate}>
       <GiltRule className="mt-7" />
@@ -844,32 +903,41 @@ function Spotlight({ session, navigate }: { session: Session; navigate: (to: str
           {s.work ? <em style={{ fontStyle: 'italic' }}>{s.work}</em> : <span className="inline-block w-[7ch] border-b" style={{ borderColor: 'rgba(217,189,122,0.6)' }}>&nbsp;</span>}
         </h1>
         {s.author && <div className="mt-2" style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 18, color: 'rgba(233,214,160,0.8)' }}>{s.author}</div>}
+        <div className="mt-6 space-y-5" style={prose}>
+          {s.intro.length > 0 ? s.intro.map((p, i) => <p key={i}>{p}</p>) : (
+            <p style={{ color: 'rgba(233,214,160,0.6)' }}>The work, its pictures and its film are chosen by the editors and will appear here.</p>
+          )}
+        </div>
         {s.video && (
           <div className="mt-8 overflow-hidden rounded-sm" style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }}>
             <video src={s.video} controls playsInline className="block w-full" />
           </div>
         )}
-        {s.slug && s.images.length > 0 && (
-          <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
-            {s.images.map((im) => (
-              <figure key={im.file}>
-                <img src={spotlightImageUrl(s.slug!, im.file)} alt={im.caption ?? ''} className="w-full rounded-sm" style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }} />
-                {im.caption && <figcaption className="mt-2 text-[13px]" style={{ fontFamily: SERIF, fontStyle: 'italic', color: 'rgba(233,214,160,0.75)' }}>{im.caption}</figcaption>}
-                {merchReady && (
-                  <button className={`${goldQuiet} mt-2`} style={goldQuietStyle} onClick={() => putOnMerch(im.file)}>
-                    <Shirt size={14} /> On a tee, a tote or a print
-                  </button>
-                )}
-              </figure>
-            ))}
+        {s.steps.length > 0 && (
+          <ol className="mt-10 space-y-12">
+            {s.steps.map((st, i) => {
+              const im = st.image && s.slug ? picture(st.image) : null;
+              return (
+                <li key={i} className={`grid grid-cols-1 gap-6 sm:items-start ${im ? 'sm:grid-cols-2' : ''}`}>
+                  <div className={im && i % 2 === 1 ? 'sm:order-2' : ''}>
+                    <div className="flex items-baseline gap-3">
+                      <span style={{ fontFamily: SERIF, fontSize: 34, fontWeight: 600, color: GOLD, lineHeight: 1 }}>{i + 1}</span>
+                      <h2 style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 600, color: GOLD, lineHeight: 1.15 }}>{st.title}</h2>
+                    </div>
+                    <p className="mt-3" style={prose}>{st.text}</p>
+                  </div>
+                  {im && <div className={i % 2 === 1 ? 'sm:order-1' : ''}>{figure(im)}</div>}
+                </li>
+              );
+            })}
+          </ol>
+        )}
+        {rest.length > 0 && (
+          <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2">
+            {rest.map((im) => <div key={im.file}>{figure(im)}</div>)}
           </div>
         )}
-        <div className="mt-8 space-y-5" style={{ fontFamily: SERIF, fontSize: 19, lineHeight: 1.55, color: 'rgba(241,227,184,0.94)' }}>
-          {s.copy.length > 0 ? s.copy.map((p, i) => <p key={i}>{p}</p>) : (
-            <p style={{ color: 'rgba(233,214,160,0.6)' }}>The work, its pictures and its film are chosen by the editors and will appear here.</p>
-          )}
-        </div>
-        <div className="mt-8 flex flex-wrap gap-3">
+        <div className="mt-10 flex flex-wrap gap-3">
           {s.editionId && (
             <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate(`/read/${s.editionId}`)}><BookOpen size={16} /> Open the edition</button>
           )}
