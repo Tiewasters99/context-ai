@@ -36,7 +36,8 @@ export type WorkshopPanelProps = {
   makePreview: (page: number, rect: FractionalRect, turn: Turn) => Promise<string | null>;
   onDownload: (item: WorkshopItem, scale: 1 | 2 | 3) => Promise<void>;
   /** The snip onto the clipboard as a picture, to paste into a generator. */
-  onCopy: (item: WorkshopItem) => Promise<void>;
+  /** Copies the plate as a PNG; `to` names the maker it is bound for (the notice says so). */
+  onCopy: (item: WorkshopItem, to?: string) => Promise<void>;
   /** A snip or a still on a tee, a tote, a print: opens the product sheet beside the page; absent = not offered (not a Library book). */
   onMerch?: ((item: WorkshopItem) => Promise<void>) | null;
   /** The reader's merchandise orders (the sheet's second view); absent = not offered. */
@@ -353,10 +354,24 @@ function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: Worksho
 
       {item.kind === 'snip' && (
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1.5 pb-1 text-[10px] text-white/40">
-          <span>Copy, then paste into</span>
+          <span>Take it to</span>
           {MAKERS.map((m, i) => (
             <span key={m.name}>
-              <a href={m.url} target="_blank" rel="noopener noreferrer" className="text-white/60 underline decoration-white/25 underline-offset-2 hover:text-[#e8b84a]">{m.name}</a>
+              <button
+                type="button"
+                title={`Copies the picture and opens ${m.name} — then paste it there (Ctrl/⌘-V)`}
+                className="text-white/60 underline decoration-white/25 underline-offset-2 hover:text-[#e8b84a] disabled:opacity-40"
+                disabled={busy === 'copy'}
+                onClick={() => {
+                  // Both inside the click: the clipboard write starts at once
+                  // (its PNG arrives as a promise), and the tab opens before
+                  // any await, so neither is refused as happening on its own.
+                  void run('copy', () => p.onCopy(item, m.name));
+                  window.open(m.url, '_blank', 'noopener,noreferrer');
+                }}
+              >
+                {m.name}
+              </button>
               {i < MAKERS.length - 1 ? ' ·' : ''}
             </span>
           ))}
@@ -514,9 +529,10 @@ function DownloadMenu({ onPick, busy }: { onPick: (scale: 1 | 2 | 3) => void; bu
   );
 }
 
-/** Where a plate goes to be made into something. None of these take a file
- *  from another site, but every one takes a pasted image in its prompt box —
- *  so the path is Copy, then paste there. */
+/** Where a plate goes to be made into something. None of these take a
+ *  picture by link from another site (no import URL, no public API for the
+ *  web apps), but every one takes a pasted image in its prompt box — so one
+ *  click copies the picture and opens the maker; the paste is the user's. */
 const MAKERS: { name: string; url: string }[] = [
   { name: 'Midjourney', url: 'https://www.midjourney.com/imagine' },
   { name: 'Flow', url: 'https://labs.google/fx/tools/flow' },

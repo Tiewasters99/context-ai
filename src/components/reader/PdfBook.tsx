@@ -1128,7 +1128,7 @@ export default function PdfBook({
   // into a generator's prompt box — none of them take a file from another
   // site, all of them take a paste. Safari wants the blob as a promise made
   // inside the gesture; Chrome takes either.
-  const copySnip = useCallback(async (item: WorkshopItem) => {
+  const copySnip = useCallback(async (item: WorkshopItem, to?: string) => {
     const pdf = pdfDocRef.current as PDFDocumentProxy | null;
     if (!pdf || !item.rect) return;
     if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
@@ -1141,7 +1141,7 @@ export default function PdfBook({
         return canvasToBlob(rotateCanvas(cropCanvas(canvas, item.rect!), item.turn), 'image/png');
       })();
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
-      setWorkshopNotice('Copied. Paste it into Flow, Midjourney, Runway, Grok or ChatGPT (Ctrl/⌘-V).');
+      setWorkshopNotice(to ? `Copied — ${to} is open in a new tab; paste the picture there (Ctrl/⌘-V).` : 'Copied. Paste it into Flow, Midjourney, Runway, Grok or ChatGPT (Ctrl/⌘-V).');
     } catch (e) {
       workshopFail(e, 'The snip could not be copied; use Download instead.');
     }
