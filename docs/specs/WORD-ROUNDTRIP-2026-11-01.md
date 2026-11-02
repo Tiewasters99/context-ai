@@ -101,6 +101,17 @@ JSZip, so the tagged path is testable without Word.
   in the row menu, latest label on the row.
 - `src/pages/brief/BriefDesk.tsx` — read-only for `editor = 'word'`.
 
+## Without the add-in (interim, 11-02)
+
+Until the add-in is in the store, the Reader carries the round trip on its
+own: **Work in Word** (the Open in Word download, renamed, with a line that
+says the file is in Downloads and what to do when done) beside **Import from
+Word**, a picker for the edited .docx. The import reads the file's tag: a tag
+for another document is refused; this document's tag, or no tag, goes on to a
+label box (prefilled with the next version) and `saveDocxVersion`, then the
+Reader reloads on the new bytes. Same version row, same Record event as a
+Save from the pane. Needs migration 127, like the pane's Save.
+
 ## Not in this version
 
 - Launching Word straight from the browser (`ms-word:ofe|u|<url>`): a signed

@@ -72,7 +72,7 @@ export default function VersionsMenu({ documentId, currentPath, onNote }: {
           {versions === null ? (
             <div className="px-2 py-2 text-white/40 inline-flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Reading…</div>
           ) : versions.length === 0 ? (
-            <div className="px-2 py-2 text-white/50 leading-snug">No versions saved from Word yet. Open in Word, then Save to Equazia in the Equazia pane.</div>
+            <div className="px-2 py-2 text-white/50 leading-snug">No versions saved from Word yet. Work in Word, then Import from Word here (or Save to Equazia in the Equazia pane).</div>
           ) : (
             <ul className="max-h-72 overflow-y-auto">
               {versions.map((v) => (
