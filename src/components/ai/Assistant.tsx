@@ -894,19 +894,23 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     }
   };
 
-  // A starter with a blank in it is put in the INPUT with the blank selected,
-  // not sent: "find the word 'term'" is not a question anybody has.
-  const runStarter = (s: Starter) => {
-    if (!s.select) { void send(s.text); return; }
-    const [from, to] = s.select;
-    setInput(s.text);
+  // A suggestion or a starter is put in the INPUT, never sent on its own:
+  // the panel waits for the user's word. (Eden, 2026-11-01: on the phone the
+  // chips sit where the thumb lands when the panel opens, and "What should I
+  // know about this work" went to the model before he had typed anything.)
+  // A starter with a blank in it has the blank selected, ready to type over;
+  // any other text has the cursor at its end, ready for Send.
+  const stage = (text: string, select?: [number, number]) => {
+    setInput(text);
     requestAnimationFrame(() => {
       const el = inputRef.current;
       if (!el) return;
       el.focus();
+      const [from, to] = select ?? [text.length, text.length];
       try { el.setSelectionRange(from, to); } catch { /* not all inputs allow it */ }
     });
   };
+  const runStarter = (s: Starter) => stage(s.text, s.select);
 
   // "clear" means two different things, and the strip says which. On a scope
   // a COMMAND put there, it drops back to the page's own matter. On the
@@ -1216,7 +1220,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
                   <button
                     key={s}
                     type="button"
-                    onClick={() => void send(s)}
+                    onClick={() => stage(s)}
+                    title="Puts this in the box — edit it or press Send"
                     className="max-w-[85%] px-3 py-2 rounded-xl border border-[rgba(232,184,74,0.65)] bg-[rgba(232,184,74,0.10)] text-left text-[13.5px] font-medium text-[#f5e6c4] hover:bg-[rgba(232,184,74,0.2)] hover:border-[#e8b84a] hover:text-white transition-colors"
                   >
                     {s}
