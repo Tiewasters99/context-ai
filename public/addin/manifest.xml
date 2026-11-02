@@ -5,9 +5,13 @@
   Add-in), or deploy it from the Microsoft 365 admin center. The pane itself is
   served from https://www.equazia.ai/addin.
 
-  WordApi 1.1 is the only requirement so the add-in loads on any Word that
-  runs add-ins; the pane checks for WordApi 1.4 at run time before offering
-  "Add a Word comment" (insertComment).
+  WordApi 1.4 is the requirement (Word 2021 and Microsoft 365, on Windows,
+  Mac and the web). The pane is a modern bundle that the webviews of Word
+  2016/2019 cannot run, and 1.4 is what "Add a Word comment" (insertComment)
+  and the custom-property tag (1.3) need; declaring it keeps those older
+  hosts from offering the add-in at all (AppSource policy 1120.3: it must
+  work on every host that meets the declared set). The run-time checks in
+  office.ts stay as belt and braces.
 -->
 <OfficeApp
   xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
@@ -33,7 +37,7 @@
   </Hosts>
   <Requirements>
     <Sets DefaultMinVersion="1.1">
-      <Set Name="WordApi" MinVersion="1.1" />
+      <Set Name="WordApi" MinVersion="1.4" />
     </Sets>
   </Requirements>
   <DefaultSettings>

@@ -8,7 +8,7 @@ Before starting (EDEN):
 - [ ] PR merged and deployed, so https://www.equazia.ai/support and the new Privacy section are live.
 - [ ] Privacy section approved (docs/appsource/PRIVACY-ADDITION.md) and its `UPDATED` date bumped.
 - [ ] Sign-up decision made (POLICY-CHECKLIST 1100.5: `SIGNUPS_OPEN = false` in src/pages/Auth.tsx).
-- [ ] Word-version decision made (POLICY-CHECKLIST 1120.3: WordApi 1.1 means testing on Word 2016/2019).
+- [x] Word-version decision made: WordApi 1.4 (Word 2021 / Microsoft 365); Word 2016/2019 excluded (POLICY-CHECKLIST 1120.3).
 - [ ] Tested on Word for Mac and Word on the web (1120.3).
 - [ ] Test account `appsource-review@equazia.ai` created, subscribed, with the matter "AppSource Review" and its sample cases.
 - [ ] Five screenshots taken (docs/appsource/LISTING.md §7).
