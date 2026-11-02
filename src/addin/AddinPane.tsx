@@ -110,7 +110,7 @@ export default function AddinPane() {
           <p className="text-[13px] text-white/70 mt-3 max-w-xs leading-relaxed">
             This page is the Equazia pane for Word. Open it inside Word: Home tab → <b>Equazia</b>.
           </p>
-          <p className="text-[11px] text-white/40 mt-3 max-w-xs">To install it: in Word, Home → Add-ins → More Add-ins → My Add-ins → Upload My Add-in, and choose the manifest saved from <span className="text-white/60">www.equazia.ai/addin/manifest.xml</span>.</p>
+          <p className="text-[11px] text-white/40 mt-3 max-w-xs">To install it: in Word, Home → Add-ins → search Equazia. To sideload instead, upload the manifest saved from <span className="text-white/60">www.equazia.ai/addin/manifest.xml</span>.</p>
         </Centered>
       </Shell>
     );
@@ -118,7 +118,7 @@ export default function AddinPane() {
   if (authLoading) {
     return <Shell><Centered><Loader2 size={18} className="animate-spin text-white/40" /></Centered></Shell>;
   }
-  if (!user) return <Shell><SignIn onSignIn={signInWithEmail} /></Shell>;
+  if (!user) return <Shell><SignIn onSignIn={signInWithEmail} openUrl={bridge.openUrl} /></Shell>;
   return <Shell><Pane bridge={bridge} userEmail={user.email ?? ''} onSignOut={() => void signOut()} /></Shell>;
 }
 
@@ -138,7 +138,9 @@ function Centered({ children }: { children: React.ReactNode }) {
 // Sign in
 // ---------------------------------------------------------------------------
 
-function SignIn({ onSignIn }: { onSignIn: (email: string, password: string) => Promise<{ error: { message: string } | null }> }) {
+const SIGN_UP_URL = 'https://www.equazia.ai/auth';
+
+function SignIn({ onSignIn, openUrl }: { onSignIn: (email: string, password: string) => Promise<{ error: { message: string } | null }>; openUrl: (url: string) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -166,7 +168,12 @@ function SignIn({ onSignIn }: { onSignIn: (email: string, password: string) => P
       <button type="submit" disabled={busy} className="w-full rounded-md bg-primary text-black font-medium py-2 text-[13px] disabled:opacity-50">
         {busy ? 'Signing in…' : 'Sign in'}
       </button>
-      <p className="text-[11px] text-white/35">No account? Create one at www.equazia.ai, then sign in here.</p>
+      <p className="text-[11px] text-white/35">
+        No account?{' '}
+        {/* Policy 1100.5: a clear sign-up path. bridge.openUrl tries Office's
+            openBrowserWindow, then window.open(url, '_blank', 'noopener'). */}
+        <button type="button" onClick={() => openUrl(SIGN_UP_URL)} className="underline underline-offset-2 text-white/60 hover:text-white">Create one at www.equazia.ai</button>, then sign in here.
+      </p>
     </form>
   );
 }

@@ -101,6 +101,34 @@ export default function Privacy() {
           </p>
         </Section>
 
+        {/* ---- BEGIN: Equazia for Word section (added 2026-11-02 for the Microsoft AppSource listing;
+             text mirrored in docs/appsource/PRIVACY-ADDITION.md; awaiting Eden's approval) ---- */}
+        <Section title="Equazia for Word (the Word add-in)">
+          <p>
+            Equazia for Word is a task pane that runs inside Microsoft Word as a page served from www.equazia.ai. It
+            signs in with your Equazia.ai account (email and password); it does not ask for your Microsoft account.
+          </p>
+          <p>
+            When you press <strong className="text-white">Save to Equazia</strong> or{' '}
+            <strong className="text-white">Confirm this brief</strong>, the add-in sends the contents of the open
+            document to Equazia.ai. Save to Equazia stores the document in the matter you chose, as a new version, under
+            the same rules as a file uploaded on the website: the same per-matter access, the same storage, the same
+            Record. Confirm this brief reads the document's citations and checks them against that matter as described
+            under AI models above. Nothing is sent until you press one of those buttons.
+          </p>
+          <p>
+            The add-in writes nothing into the text of your document except Word comments you explicitly ask it to add.
+            To recognise the document the next time it is opened, it stores a document identifier (and the matter's
+            identifier) as custom document properties inside the .docx, and remembers the matter you chose in the
+            add-in settings saved with the document.
+          </p>
+          <p>
+            No information goes to Microsoft from the add-in beyond what Office itself collects as part of running
+            add-ins (Office's own telemetry, under Microsoft's terms).
+          </p>
+        </Section>
+        {/* ---- END: Equazia for Word section ---- */}
+
         <Section title="What we do not do">
           <p>
             We do not sell information, share it with advertisers, or use matter content for anything except providing
