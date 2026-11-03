@@ -101,6 +101,9 @@
       ]
     }
   ],
+  "redirects": [
+    { "source": "/", "has": [{ "type": "host", "value": "reader.grapheon.ai" }], "destination": "/library", "permanent": false }
+  ],
   "rewrites": [
     {
       "source": "/api/gpt/openapi.json",
