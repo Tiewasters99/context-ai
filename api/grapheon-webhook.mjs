@@ -15,9 +15,11 @@
 //      createPrintifyOrder with the address Stripe collected (re-fetched
 //      from the Session, so the shape is the pinned API version's, not the
 //      endpoint's), external_id = our order id;
-//   3. send it to production only when MERCH_SEND_TO_PRODUCTION=1. Off, the
-//      order waits on hold in the shop and can be cancelled there without a
-//      print — the test loop the spec describes. On, it prints.
+//   3. send it to production only when MERCH_SEND_TO_PRODUCTION=1. With
+//      `window`, the order waits on hold and api/merch-release sends it once
+//      the cancellation window has passed (lib/merch-window.mjs); unset, it
+//      waits in the shop until a hand sends it — the test loop the spec
+//      describes. On hold it can be cancelled without a print being made.
 //
 // A database or Printify failure answers 500 so Stripe retries (up to three
 // days); the claim is released so the retry can place the order. Only an
@@ -28,6 +30,7 @@
 import { json, SUPABASE_URL, SERVICE_KEY } from '../lib/account-security.mjs';
 import { verifyStripeSignature, readRawBody, stripeRequest } from '../lib/stripe-core.mjs';
 import { printifyConfigured, createPrintifyOrder, sendOrderToProduction, cancelPrintifyOrder } from '../lib/printify.mjs';
+import { productionMode } from '../lib/merch-window.mjs';
 
 export const config = { api: { bodyParser: false } };
 
@@ -208,7 +211,7 @@ async function onMerchPaid(res, { session, env, ctx, doFetch }) {
     }, ctx);
     if (!placed?.id) throw new Error('Printify returned no order id.');
     let patch = { printify_order_id: placed.id, status: 'placed', placed_at: now.toISOString(), placing_at: null, error: null };
-    if (env.MERCH_SEND_TO_PRODUCTION === '1') {
+    if (productionMode(env) === 'now') {
       await sendOrderToProduction(placed.id, ctx);
       patch = { ...patch, status: 'in_production', sent_to_production_at: new Date().toISOString() };
     }

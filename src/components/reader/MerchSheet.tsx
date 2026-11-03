@@ -8,7 +8,7 @@ import {
 } from '@/lib/grapheon-merch';
 import {
   type Orientation, coloursOf, sizesFor, reconcile, formatMoney, fromCents, shippingCents, clampQuantity,
-  mockupFor, reusableByKey, productNoun, pictureOrientation, orderStatusSentence, orderStillMoving,
+  mockupFor, reusableByKey, productNoun, pictureOrientation, orderStatusSentence, cancelWindowSentence, orderStillMoving,
 } from '@/lib/merch-sheet';
 
 // The product sheet (Grapheon Reader, Phase 2b part 2): a picture from the
@@ -152,6 +152,7 @@ type ProductDeps = { api: MerchApi; upload: typeof liveUpload; mine: typeof live
 function ProductView({ open, userId, returnPath, api, upload, mine, go, pollMs }: { open: Extract<MerchSheetOpen, { kind: 'product' }>; userId: string; returnPath: string } & ProductDeps) {
   const [blueprints, setBlueprints] = useState<MerchBlueprint[] | null>(null);
   const [configured, setConfigured] = useState(true);
+  const [cancelWindow, setCancelWindow] = useState<number | null>(null);
   const [key, setKey] = useState<string | null>(null);
   const [products, setProducts] = useState<Map<string, MerchProduct>>(new Map());
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -205,10 +206,11 @@ function ProductView({ open, userId, returnPath, api, upload, mine, go, pollMs }
     let cancelled = false;
     (async () => {
       try {
-        const r = await api<{ products: MerchBlueprint[]; configured: boolean }>('products');
+        const r = await api<{ products: MerchBlueprint[]; configured: boolean; cancel_window_min?: number | null }>('products');
         if (cancelled) return;
         setBlueprints(r.products);
         setConfigured(r.configured !== false);
+        setCancelWindow(r.cancel_window_min ?? null);
         const first = r.products[0]?.key ?? null;
         setKey(first);
         if (r.configured === false) { setLine(null); return; }
@@ -431,7 +433,7 @@ function ProductView({ open, userId, returnPath, api, upload, mine, go, pollMs }
             {buying ? 'Opening checkout…' : `Buy — ${formatMoney((unit ?? 0) * quantity + ship)} at checkout`}
           </button>
           <p className="mt-2 text-[11px] leading-relaxed text-white/45">
-            You pay on Stripe's page. The print shop makes it after payment; it can be cancelled any time before it goes into production.
+            {cancelWindowSentence(cancelWindow)}
           </p>
         </div>
       )}
@@ -445,6 +447,26 @@ function OrdersView({ freshId, api, byId, pollMs }: { freshId: string | null; ap
   const [orders, setOrders] = useState<MerchOrder[] | null>(null);
   const [products, setProducts] = useState<Map<string, MerchProduct>>(new Map());
   const [trouble, setTrouble] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+
+  const replace = (order: MerchOrder) => setOrders((os) => (os ? os.map((o) => (o.id === order.id ? order : o)) : os));
+
+  // Cancel a held order: the server cancels it at the printer and refunds it.
+  const cancelOrder = async (id: string) => {
+    setBusy(id);
+    try {
+      const r = await api<{ order: MerchOrder }>('cancel', { order_id: id });
+      replace(r.order);
+      setNotes((n) => ({ ...n, [id]: '' }));
+    } catch (e) {
+      setNotes((n) => ({ ...n, [id]: e instanceof Error ? e.message : 'It could not be cancelled.' }));
+      // Where it stands now, in case the printer had already started.
+      try { replace((await api<{ order: MerchOrder }>('order', { order_id: id })).order); } catch { /* keep what we have */ }
+    } finally {
+      setBusy(null);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -507,6 +529,18 @@ function OrdersView({ freshId, api, byId, pollMs }: { freshId: string | null; ap
                   <> <a href={o.tracking[0].url ?? undefined} target="_blank" rel="noreferrer" className="underline underline-offset-2 text-white/70 hover:text-white">Track it</a></>
                 )}
               </div>
+              {o.status === 'placed' && (
+                <button
+                  type="button"
+                  onClick={() => void cancelOrder(o.id)}
+                  disabled={busy === o.id}
+                  className="mt-1 text-[12px] underline underline-offset-2 text-white/60 hover:text-white disabled:opacity-50"
+                  data-card-inert=""
+                >
+                  {busy === o.id ? 'Cancelling…' : 'Cancel this order'}
+                </button>
+              )}
+              {notes[o.id] && <div className="mt-1 text-[11.5px]" style={{ color: GOLD }}>{notes[o.id]}</div>}
             </div>
           </div>
         );

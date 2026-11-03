@@ -176,22 +176,36 @@ export function productNoun(kind: string, label?: string | null): string {
 /* ───────────────────────── Orders ───────────────────────── */
 
 /** One sentence for where an order stands. */
-export function orderStatusSentence(o: Pick<MerchOrder, 'status' | 'tracking' | 'shipped_at'>): string {
+export function orderStatusSentence(o: Pick<MerchOrder, 'status' | 'tracking' | 'shipped_at'> & { cancel_until?: string | null }): string {
   switch (o.status) {
     case 'pending': return 'Checkout was not finished. Nothing was charged.';
     case 'paid': return 'Paid. Placing it with the printer now.';
-    case 'placed': return 'Placed with the printer, on hold until it goes to production. It can still be cancelled.';
+    case 'placed': {
+      const until = o.cancel_until ? new Date(o.cancel_until) : null;
+      if (until && !Number.isNaN(until.getTime())) {
+        const when = until.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        return `With the printer. It goes into production after ${when}; until then you can cancel it here for a full refund.`;
+      }
+      return 'Placed with the printer, on hold until it goes to production. It can still be cancelled.';
+    }
     case 'in_production': return 'Being made. It cannot be cancelled now.';
     case 'shipped': {
       const t = (o.tracking || []).find((x) => x.number);
       return t ? `Shipped${t.carrier ? ` with ${t.carrier}` : ''}, tracking ${t.number}.` : 'Shipped.';
     }
     case 'delivered': return 'Delivered.';
-    case 'canceled': return 'Cancelled.';
-    case 'refunded': return 'Refunded.';
+    case 'canceled': return 'Cancelled. The refund is on its way to your card.';
+    case 'refunded': return 'Cancelled and refunded.';
     case 'failed': return 'Checkout failed before payment. Nothing was charged.';
     default: return String(o.status);
   }
+}
+
+/** The line under the Buy button: when the order goes to the printer and until when it can be cancelled. */
+export function cancelWindowSentence(min: number | null | undefined): string {
+  if (min == null) return 'You pay on Stripe\'s page. The print shop makes it after payment; it can be cancelled any time before it goes into production.';
+  const span = min >= 60 && min % 60 === 0 ? (min === 60 ? 'an hour' : `${min / 60} hours`) : `${min} minutes`;
+  return `You pay on Stripe\'s page. The order goes to the printer about ${span} later; until then you can cancel it under Your orders for a full refund.`;
 }
 
 /** True while the sheet should keep asking the server about this order. */

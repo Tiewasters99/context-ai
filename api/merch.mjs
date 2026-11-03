@@ -20,6 +20,9 @@
 //   order, order_id          → { order }                one order, refreshed from Printify when
 //                                                        it has been placed
 //   orders                   → { orders: [...] }        the caller's orders, newest first
+//   cancel, order_id         → { order }                a held order: cancelled at the printer,
+//                                                        refunded in full; 409 too_late once
+//                                                        it is in production
 //
 // The rights gate in `make` (D11 and the Library rule), server-side:
 //   document: the bench item is readable as the user; its document's matter
@@ -51,12 +54,13 @@ import {
 import { stripeRequest } from '../lib/stripe-core.mjs';
 import {
   printifyConfigured, PrintifyAPIError, uploadImageToPrintify, getBlueprintVariants,
-  createPrintifyProduct, updateProductPrices, getPrintifyProduct, getOrderStatus,
+  createPrintifyProduct, updateProductPrices, getPrintifyProduct, getOrderStatus, cancelPrintifyOrder,
 } from '../lib/printify.mjs';
+import { productionMode, cancelWindowMin, cancelUntil } from '../lib/merch-window.mjs';
 
 const TIMEOUT_MS = 8000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ACTIONS = new Set(['products', 'make', 'mockups', 'checkout', 'order', 'orders']);
+const ACTIONS = new Set(['products', 'make', 'mockups', 'checkout', 'order', 'orders', 'cancel']);
 const PRINTS_BUCKET = 'cover-images';
 const LIBRARY_SERVERSPACE = 'library';
 const LOG = '[merch]';
@@ -151,7 +155,7 @@ function publicProduct(row) {
   };
 }
 
-function publicOrder(row) {
+function publicOrder(row, env = process.env) {
   if (!row) return null;
   return {
     id: row.id,
@@ -167,6 +171,9 @@ function publicOrder(row) {
     status: row.status,
     tracking: row.tracking ?? [],
     placed_at: row.placed_at,
+    sent_to_production_at: row.sent_to_production_at ?? null,
+    // Until when the buyer can cancel it here (window mode); null when it waits for a hand.
+    cancel_until: cancelUntil(row, env),
     shipped_at: row.shipped_at,
     created_at: row.created_at,
     error: row.error ?? null,
@@ -327,13 +334,18 @@ export default async function handler(req, res, deps = {}) {
   if (action === 'products') {
     const r = await serviceSelect('merch_blueprints', 'enabled=is.true&order=sort_order.asc&select=key,kind,label,estimate_cents,shipping_first_cents,shipping_additional_cents,countries,default_scale', doFetch);
     if (!r.ok) return json(res, 503, { error: 'storage_unavailable' });
-    return json(res, 200, { products: r.rows, configured: printifyConfigured(env) && Boolean(grapheonStripeKey(env)) });
+    return json(res, 200, {
+      products: r.rows,
+      configured: printifyConfigured(env) && Boolean(grapheonStripeKey(env)),
+      // Minutes a paid order waits before it goes to the printer; null when it waits for a hand.
+      cancel_window_min: productionMode(env) === 'window' ? cancelWindowMin(env) : null,
+    });
   }
 
   if (action === 'orders') {
     const r = await userSelect(bearer, 'merch_orders', 'select=*&order=created_at.desc&limit=50', doFetch);
     if (!r.ok) return json(res, 503, { error: 'storage_unavailable' });
-    return json(res, 200, { orders: r.rows.map(publicOrder) });
+    return json(res, 200, { orders: r.rows.map((o) => publicOrder(o, env)) });
   }
 
   if (action === 'order') {
@@ -345,13 +357,21 @@ export default async function handler(req, res, deps = {}) {
     if (row.printify_order_id && ['placed', 'in_production', 'shipped'].includes(row.status) && printifyConfigured(env)) {
       row = await refreshFromPrintify(row, ctx, doFetch);
     }
-    return json(res, 200, { order: publicOrder(row) });
+    return json(res, 200, { order: publicOrder(row, env) });
   }
 
   if (!printifyConfigured(env)) {
     return json(res, 503, { error: 'merch_not_configured', message: 'The print shop is not connected on this deployment.' });
   }
 
+  if (action === 'cancel') {
+    const id = String(body.order_id ?? '');
+    if (!UUID_RE.test(id)) return json(res, 400, { error: 'bad_request' });
+    const r = await userSelect(bearer, 'merch_orders', `id=eq.${id}&select=*`, doFetch);
+    const row = r.ok ? r.rows[0] : null;
+    if (!row) return json(res, 404, { error: 'not_found' });
+    return cancelOrder(res, { row, env, ctx, doFetch });
+  }
   if (action === 'make') return make(req, res, { bearer, user, body, ctx, doFetch });
   if (action === 'mockups') return mockups(res, { bearer, body, ctx, doFetch });
   if (action === 'checkout') return checkout(req, res, { bearer, user, body, env, doFetch });
@@ -600,4 +620,49 @@ async function refreshFromPrintify(row, ctx, doFetch) {
     console.warn(`${LOG} order refresh failed for ${row.id}: ${err?.message}`);
     return row;
   }
+}
+
+/* ───────────────────────── cancel ───────────────────────── */
+
+// A held order is the buyer's to cancel until the sweep (api/merch-release)
+// or MERCH_SEND_TO_PRODUCTION=1 has sent it to production. The conditional
+// claim placed → canceled is what keeps a cancel and a release from both
+// winning. The refund goes back through Grapheon's Stripe account, in full;
+// Stripe's charge.refunded then reaches the webhook, which already records it.
+async function cancelOrder(res, { row, env, ctx, doFetch }) {
+  const tooLate = (order) => json(res, 409, { error: 'too_late', message: 'The printer has already started on it; it cannot be cancelled now.', order: publicOrder(order, env) });
+  if (row.status === 'canceled' || row.status === 'refunded') return json(res, 200, { order: publicOrder(row, env) });
+  if (row.status === 'pending' || row.status === 'failed') return json(res, 409, { error: 'not_cancellable', message: 'Nothing was charged for this order.' });
+  if (row.status === 'paid') return json(res, 409, { error: 'not_cancellable', message: 'It is being placed with the printer; try again in a moment.' });
+  if (row.status !== 'placed' || !row.printify_order_id) return tooLate(row);
+
+  const claim = await serviceWrite('PATCH', 'merch_orders', `id=eq.${row.id}&status=eq.placed`, { status: 'canceled', error: null }, doFetch);
+  if (!claim.ok) return json(res, 503, { error: 'storage_unavailable', message: claim.error });
+  if (!claim.row) return tooLate(row);
+
+  try {
+    await cancelPrintifyOrder(row.printify_order_id, ctx);
+  } catch (err) {
+    // Printify would not let go: it has moved on. Put the record back and let the refresh say where it stands.
+    const back = await serviceWrite('PATCH', 'merch_orders', `id=eq.${row.id}`, { status: 'placed', error: `not cancelled: ${err?.message || 'Printify refused'}` }, doFetch);
+    const cur = back.ok && back.row ? await refreshFromPrintify(back.row, ctx, doFetch) : row;
+    return tooLate(cur);
+  }
+
+  let patch = { status: 'canceled', error: 'refund pending' };
+  if (row.stripe_payment_intent && env.GRAPHEON_STRIPE_SECRET_KEY) {
+    const refund = await stripeRequest('/v1/refunds', {
+      secretKey: env.GRAPHEON_STRIPE_SECRET_KEY,
+      idempotencyKey: `merch-refund-${row.id}`,
+      fetchImpl: doFetch,
+      body: { payment_intent: row.stripe_payment_intent, metadata: { kind: 'merch', order_id: row.id } },
+    });
+    if (refund.ok) patch = { status: 'refunded', error: null };
+    else {
+      patch.error = `refund failed: ${refund.error || 'Stripe refused'}`;
+      console.error(`${LOG} refund failed for ${row.id}: ${refund.error}`);
+    }
+  }
+  const saved = await serviceWrite('PATCH', 'merch_orders', `id=eq.${row.id}`, patch, doFetch);
+  return json(res, 200, { order: publicOrder(saved.ok && saved.row ? saved.row : { ...row, ...patch }, env) });
 }
