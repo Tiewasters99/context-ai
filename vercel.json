@@ -131,6 +131,16 @@
       "has": [
         {
           "type": "host",
+          "value": "reader.grapheon.ai"
+        }
+      ],
+      "destination": "/edition.html"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "has": [
+        {
+          "type": "host",
           "value": "read.grapheon.ai"
         }
       ],
