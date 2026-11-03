@@ -19,7 +19,11 @@
 // the Printify order once (a replayed event places nothing), reads the
 // address from the re-fetched Session, sends to production only when
 // MERCH_SEND_TO_PRODUCTION=1, and releases its claim on a Printify failure
-// so the retry can place the order.
+// so the retry can place the order. With MERCH_SEND_TO_PRODUCTION=window the
+// order waits on hold with a cancel_until; api/merch-release (the cron)
+// leaves it until the window has passed, then claims it and sends it to
+// production; `cancel` inside the window cancels it at Printify and refunds
+// it in full through Grapheon's Stripe, and is a 409 once it has gone.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,6 +35,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
 
 const { default: merch, priceCents, imageUrlIsMine, readPrintifyProduct } = await import('../api/merch.mjs');
 const { default: webhook, addressFromSession } = await import('../api/grapheon-webhook.mjs');
+const { default: release } = await import('../api/merch-release.mjs');
 
 const READER = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const OTHER = 'ffffffff-0000-4111-8222-333333333333';
@@ -104,6 +109,7 @@ function fakeWorld({ printifyImages = [], failOrder = false, spotlightFiles = []
   const calls = [];
   const store = makeStore();
   let printifyOrders = 0;
+  const sent = new Set(); // Printify orders sent to production: no longer cancellable
   const fetchImpl = async (url, init = {}) => {
     const u = new URL(url);
     const auth = String(init.headers?.authorization ?? init.headers?.Authorization ?? '');
@@ -216,7 +222,13 @@ function fakeWorld({ printifyImages = [], failOrder = false, spotlightFiles = []
         printifyOrders += 1;
         return respond(200, { id: `po-${printifyOrders}`, status: 'on-hold' });
       }
-      if (/^\/v1\/shops\/25109380\/orders\/po-\d+\/send_to_production\.json$/.test(u.pathname)) return respond(200, { id: 'po-1', status: 'in-production' });
+      const po = /^\/v1\/shops\/25109380\/orders\/(po-\d+)(\/send_to_production|\/cancel)?\.json$/.exec(u.pathname);
+      if (po && po[2] === '/send_to_production') { sent.add(po[1]); return respond(200, { id: po[1], status: 'in-production' }); }
+      if (po && po[2] === '/cancel') {
+        if (sent.has(po[1])) return respond(400, { message: 'Order cannot be canceled: it is in production' });
+        return respond(200, { id: po[1], status: 'canceled' });
+      }
+      if (po && method === 'GET') return respond(200, { id: po[1], status: sent.has(po[1]) ? 'in-production' : 'on-hold' });
       return respond(404, { message: `no printify fixture for ${u.pathname}` });
     }
 
@@ -231,6 +243,7 @@ function fakeWorld({ printifyImages = [], failOrder = false, spotlightFiles = []
           total_details: { amount_tax: 0, amount_shipping: 495 },
         });
       }
+      if (u.pathname === '/v1/refunds' && method === 'POST') return respond(200, { id: 're_1', status: 'succeeded' });
       return respond(404, { error: { message: `no stripe fixture for ${u.pathname}` } });
     }
     return respond(500, { message: `unexpected host ${u.host}` });
@@ -447,6 +460,14 @@ async function deliver(w, event, { env = ENV, secret = ENV.GRAPHEON_STRIPE_WEBHO
   return res;
 }
 
+/** The cron's call on api/merch-release, at a chosen moment. */
+async function sweep(w, { env = ENV, nowMs = Date.now(), headers = {} } = {}) {
+  const req = { method: 'GET', headers };
+  const res = response();
+  await release(req, res, { fetchImpl: w.fetchImpl, env, nowMs });
+  return res;
+}
+
 const paidEvent = (orderId, id = 'evt_1') => ({
   id, type: 'checkout.session.completed', created: 1_800_000_000,
   data: { object: { id: 'cs_test_1', object: 'checkout.session', payment_status: 'paid', amount_total: 3294, payment_intent: 'pi_1', metadata: { kind: 'merch', order_id: orderId }, customer_details: { email: 'reader@example.test' }, total_details: { amount_tax: 0, amount_shipping: 495 } } },
@@ -548,5 +569,144 @@ test('webhook: a Printify failure answers 500 and releases the claim, so the ret
   assert.equal(retry.statusCode, 200, retry.body);
   assert.equal(order.status, 'placed');
   assert.equal(order.printify_order_id, 'po-7');
+  assert.equal(order.error, null);
+});
+
+/* ───────────────────────── the cancellation window ───────────────────────── */
+
+const WINDOW = { ...ENV, MERCH_SEND_TO_PRODUCTION: 'window' };
+
+test('window: the paid order waits on hold with a cancel_until an hour out; the sweep leaves it inside the window, then claims it and sends it to production; a cancel after that is too late', async () => {
+  const w = fakeWorld();
+  const p = await makeReadyProduct(w);
+  const c = await post(w, 'tok-reader', { action: 'checkout', product_id: p.id, variant_id: 17390, quantity: 1 }, WINDOW);
+  const orderId = c.json().order_id;
+  const r = await deliver(w, paidEvent(orderId), { env: WINDOW });
+  assert.equal(r.statusCode, 200, r.body);
+  assert.equal(r.json().status, 'placed');
+  assert.equal(w.printify().filter((x) => /send_to_production/.test(x.path)).length, 0, 'held');
+  const order = w.store.tables.merch_orders.find((o) => o.id === orderId);
+  const placedAt = Date.parse(order.placed_at);
+
+  const mine = await post(w, 'tok-reader', { action: 'orders' }, WINDOW);
+  assert.equal(Date.parse(mine.json().orders[0].cancel_until), placedAt + 60 * 60_000);
+  assert.equal((await post(w, 'tok-reader', { action: 'orders' })).json().orders[0].cancel_until, null, 'no window when it waits for a hand');
+  assert.equal((await post(w, 'tok-reader', { action: 'products' }, WINDOW)).json().cancel_window_min, 60);
+  assert.equal((await post(w, 'tok-reader', { action: 'products' })).json().cancel_window_min, null);
+
+  const early = await sweep(w, { env: WINDOW, nowMs: placedAt + 30 * 60_000 });
+  assert.equal(early.statusCode, 200, early.body);
+  assert.equal(early.json().released, 0);
+  assert.equal(order.status, 'placed');
+
+  const late = await sweep(w, { env: WINDOW, nowMs: placedAt + 61 * 60_000 });
+  assert.equal(late.json().released, 1);
+  assert.equal(order.status, 'in_production');
+  assert.ok(order.sent_to_production_at);
+  assert.equal(order.error, null);
+  assert.equal(w.printify().filter((x) => x.path === '/v1/shops/25109380/orders/po-1/send_to_production.json').length, 1);
+  assert.equal((await sweep(w, { env: WINDOW, nowMs: placedAt + 90 * 60_000 })).json().released, 0, 'nothing left to release');
+
+  // The gap between the sweep's claim and Printify's answer: the shop still says
+  // on-hold, and a read of the order must not undo the claim.
+  const wGap = { ...w, fetchImpl: async (url, init) => {
+    if (/\/orders\/po-1\.json$/.test(String(url))) return new Response(JSON.stringify({ id: 'po-1', status: 'on-hold' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return w.fetchImpl(url, init);
+  } };
+  const read = await post(wGap, 'tok-reader', { action: 'order', order_id: orderId }, WINDOW);
+  assert.equal(read.json().order.status, 'in_production', 'a read never moves the order backward');
+  assert.equal(order.status, 'in_production');
+
+  const tooLate = await post(w, 'tok-reader', { action: 'cancel', order_id: orderId }, WINDOW);
+  assert.equal(tooLate.statusCode, 409);
+  assert.equal(tooLate.json().error, 'too_late');
+  assert.equal(tooLate.json().order.status, 'in_production');
+  assert.equal(w.stripe().filter((x) => x.path === '/v1/refunds').length, 0, 'nothing refunded');
+  assert.equal(order.status, 'in_production');
+});
+
+test('window: a buyer cancels inside the window — cancelled at Printify, refunded in full through Grapheon’s Stripe, status refunded; another reader cannot; the sweep then leaves it alone; cancelling again changes nothing', async () => {
+  const w = fakeWorld();
+  const p = await makeReadyProduct(w);
+  const c = await post(w, 'tok-reader', { action: 'checkout', product_id: p.id, variant_id: 17390, quantity: 1 }, WINDOW);
+  const orderId = c.json().order_id;
+  await deliver(w, paidEvent(orderId), { env: WINDOW });
+
+  assert.equal((await post(w, 'tok-other', { action: 'cancel', order_id: orderId }, WINDOW)).statusCode, 404);
+
+  const r = await post(w, 'tok-reader', { action: 'cancel', order_id: orderId }, WINDOW);
+  assert.equal(r.statusCode, 200, r.body);
+  assert.equal(r.json().order.status, 'refunded');
+  assert.ok(w.printify().some((x) => x.path === '/v1/shops/25109380/orders/po-1/cancel.json' && x.method === 'POST'));
+  const refund = w.stripe().find((x) => x.path === '/v1/refunds');
+  assert.equal(refund.form.get('payment_intent'), 'pi_1');
+  assert.equal(refund.form.get('metadata[kind]'), 'merch');
+  assert.equal(refund.form.get('metadata[order_id]'), orderId);
+  const order = w.store.tables.merch_orders.find((o) => o.id === orderId);
+  assert.equal(order.status, 'refunded');
+  assert.equal(order.error, null);
+
+  const sw = await sweep(w, { env: WINDOW, nowMs: Date.parse(order.placed_at) + 2 * 60 * 60_000 });
+  assert.equal(sw.json().released, 0);
+  assert.equal(w.printify().filter((x) => /send_to_production/.test(x.path)).length, 0, 'never printed');
+
+  const again = await post(w, 'tok-reader', { action: 'cancel', order_id: orderId }, WINDOW);
+  assert.equal(again.statusCode, 200);
+  assert.equal(again.json().order.status, 'refunded');
+  assert.equal(w.stripe().filter((x) => x.path === '/v1/refunds').length, 1, 'one refund');
+});
+
+test('window: the printer refuses the cancel (already started) — the record goes back, the answer is too_late, nothing is refunded', async () => {
+  const w = fakeWorld();
+  const p = await makeReadyProduct(w);
+  const c = await post(w, 'tok-reader', { action: 'checkout', product_id: p.id, variant_id: 17390, quantity: 1 }, WINDOW);
+  const orderId = c.json().order_id;
+  await deliver(w, paidEvent(orderId), { env: WINDOW });
+  // Sent by hand in the shop meanwhile: Printify knows, the record does not yet.
+  const w2 = { ...w, fetchImpl: async (url, init) => {
+    if (/\/orders\/po-1\/cancel\.json$/.test(String(url))) return new Response(JSON.stringify({ message: 'in production' }), { status: 400, headers: { 'content-type': 'application/json' } });
+    if (/\/orders\/po-1\.json$/.test(String(url))) return new Response(JSON.stringify({ id: 'po-1', status: 'in-production' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return w.fetchImpl(url, init);
+  } };
+  const r = await post(w2, 'tok-reader', { action: 'cancel', order_id: orderId }, WINDOW);
+  assert.equal(r.statusCode, 409, r.body);
+  assert.equal(r.json().error, 'too_late');
+  assert.equal(r.json().order.status, 'in_production');
+  const order = w.store.tables.merch_orders.find((o) => o.id === orderId);
+  assert.equal(order.status, 'in_production');
+  assert.equal(w.stripe().filter((x) => x.path === '/v1/refunds').length, 0);
+});
+
+test('sweep: does nothing unless MERCH_SEND_TO_PRODUCTION=window; with CRON_SECRET set the call must carry it; a Printify refusal puts the row back for the next sweep', async () => {
+  const w = fakeWorld();
+  const p = await makeReadyProduct(w);
+  const c = await post(w, 'tok-reader', { action: 'checkout', product_id: p.id, variant_id: 17390, quantity: 1 });
+  await deliver(w, paidEvent(c.json().order_id));
+  const order = w.store.tables.merch_orders[0];
+  const far = Date.parse(order.placed_at) + 24 * 60 * 60_000;
+
+  const hold = await sweep(w, { env: ENV, nowMs: far });
+  assert.equal(hold.json().mode, 'hold');
+  assert.equal(hold.json().released, 0);
+  assert.equal(order.status, 'placed');
+
+  const locked = await sweep(w, { env: { ...WINDOW, CRON_SECRET: 'cron-s' }, nowMs: far });
+  assert.equal(locked.statusCode, 401);
+  assert.equal(order.status, 'placed');
+
+  const w2 = { ...w, fetchImpl: async (url, init) => {
+    if (/send_to_production/.test(String(url))) return new Response(JSON.stringify({ message: 'Printify fell over' }), { status: 500, headers: { 'content-type': 'application/json' } });
+    return w.fetchImpl(url, init);
+  } };
+  const down = await sweep(w2, { env: { ...WINDOW, CRON_SECRET: 'cron-s' }, nowMs: far, headers: { authorization: 'Bearer cron-s' } });
+  assert.equal(down.json().released, 0);
+  assert.equal(down.json().failed, 1);
+  assert.equal(order.status, 'placed', 'back for the next sweep');
+  assert.equal(order.sent_to_production_at, null);
+  assert.match(order.error, /not sent to production/);
+
+  const opened = await sweep(w, { env: { ...WINDOW, CRON_SECRET: 'cron-s' }, nowMs: far, headers: { authorization: 'Bearer cron-s' } });
+  assert.equal(opened.json().released, 1);
+  assert.equal(order.status, 'in_production');
   assert.equal(order.error, null);
 });

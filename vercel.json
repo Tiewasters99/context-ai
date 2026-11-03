@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/merch-release",
+      "schedule": "*/15 * * * *"
+    }
+  ],
   "functions": {
     "api/mcp.mjs": {
       "maxDuration": 60

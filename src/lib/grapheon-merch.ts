@@ -89,6 +89,9 @@ export type MerchOrder = {
   status: 'pending' | 'paid' | 'placed' | 'in_production' | 'shipped' | 'delivered' | 'canceled' | 'refunded' | 'failed';
   tracking: MerchTracking[];
   placed_at: string | null;
+  sent_to_production_at?: string | null;
+  /** Until when the buyer can cancel it here; null when it waits for a hand. */
+  cancel_until?: string | null;
   shipped_at: string | null;
   created_at: string;
   error: string | null;
