@@ -101,6 +101,12 @@
       ]
     }
   ],
+  "redirects": [
+    { "source": "/reader", "has": [{ "type": "host", "value": "www.equazia.ai" }], "destination": "https://reader.grapheon.ai/", "permanent": false },
+    { "source": "/reader/:path*", "has": [{ "type": "host", "value": "www.equazia.ai" }], "destination": "https://reader.grapheon.ai/:path*", "permanent": false },
+    { "source": "/reader", "has": [{ "type": "host", "value": "equazia.ai" }], "destination": "https://reader.grapheon.ai/", "permanent": false },
+    { "source": "/reader/:path*", "has": [{ "type": "host", "value": "equazia.ai" }], "destination": "https://reader.grapheon.ai/:path*", "permanent": false }
+  ],
   "rewrites": [
     {
       "source": "/api/gpt/openapi.json",
