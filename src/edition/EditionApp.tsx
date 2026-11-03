@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search, Shirt } from 'lucide-react';
+import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search, Shirt, Music } from 'lucide-react';
+import { ListenPanel, stopListening } from './Listen';
 import { supabase } from '@/lib/supabase';
 import MerchSheet, { type MerchSheetOpen } from '@/components/reader/MerchSheet';
 import { readMerchReturn, stripMerchReturn } from '@/lib/merch-sheet';
@@ -1282,6 +1283,16 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
   const [notice, setNotice] = useState<string | null>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [reloadKey] = useState(0);
+  // The cover around the page (the edition's jacket, signed) and the music panel.
+  const [surroundUrl, setSurroundUrl] = useState<string | null>(null);
+  const [listening, setListening] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setSurroundUrl(null);
+    if (edition?.cover_path) void coverUrl(edition).then((u) => { if (live) setSurroundUrl(u); }).catch(() => {});
+    return () => { live = false; };
+  }, [edition]);
+  useEffect(() => () => stopListening(), []);
 
   // Keyed by the edition in EditionApp, so a new id is a fresh mount.
   useEffect(() => {
@@ -1328,6 +1339,7 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
   }
 
   const publishItem: MoreItem[] = mine ? [{ icon: <Sparkles size={14} />, label: edition.version > 0 ? 'Publish update' : 'Publish', run: () => setPublishing(true) }] : [];
+  const listenItem: MoreItem = { icon: <Music size={14} />, label: 'Listen', run: () => setListening(true) };
 
   return (
     <div className="fixed inset-0 overflow-hidden">
@@ -1339,13 +1351,22 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
         currentUserId={session.user.id}
         meta={{ title: edition.title, pageCount: null }}
         pageMemoryKey={`edition:${edition.id}`}
+        backdrop={surroundUrl}
         onClose={() => navigate('/')}
         title={
           <span className="truncate text-[13px] text-white/80" style={{ fontFamily: SERIF, fontSize: 16 }}>
             {edition.title}{edition.author ? <span className="opacity-60"> · {edition.author}</span> : null}
           </span>
         }
-        toolbarEnd={mine ? (
+        toolbarEnd={<>
+          <button
+            onClick={() => setListening((v) => !v)}
+            className="hidden sm:inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-white/80 hover:bg-white/5 hover:text-white"
+            title="Music while you read"
+          >
+            <Music size={14} /> Listen
+          </button>
+          {mine ? (
           <button
             onClick={() => setPublishing(true)}
             className="hidden sm:inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-white/80 hover:bg-white/5 hover:text-white"
@@ -1354,7 +1375,8 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
             <Sparkles size={14} /> {edition.version > 0 ? `Publish update (v${edition.version} live)` : 'Publish'}
           </button>
         ) : null}
-        moreItems={publishItem}
+        </>}
+        moreItems={[listenItem, ...publishItem]}
         banners={notice ? (
           <div className="border-b border-[rgba(232,184,74,0.35)] bg-[rgba(232,184,74,0.10)] px-3 py-1.5 text-[12px] text-[#e8b84a]">{notice}</div>
         ) : trouble ? (
@@ -1363,6 +1385,7 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
         onOpened={(opened) => setPdf(opened)}
         onError={(e) => setTrouble(e instanceof Error ? e.message : 'The book could not be opened.')}
       />
+      {listening && <ListenPanel onClose={() => setListening(false)} />}
       {publishing && (
         <PublishDialog
           edition={edition}
