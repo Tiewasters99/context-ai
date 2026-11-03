@@ -607,6 +607,16 @@ test('window: the paid order waits on hold with a cancel_until an hour out; the 
   assert.equal(w.printify().filter((x) => x.path === '/v1/shops/25109380/orders/po-1/send_to_production.json').length, 1);
   assert.equal((await sweep(w, { env: WINDOW, nowMs: placedAt + 90 * 60_000 })).json().released, 0, 'nothing left to release');
 
+  // The gap between the sweep's claim and Printify's answer: the shop still says
+  // on-hold, and a read of the order must not undo the claim.
+  const wGap = { ...w, fetchImpl: async (url, init) => {
+    if (/\/orders\/po-1\.json$/.test(String(url))) return new Response(JSON.stringify({ id: 'po-1', status: 'on-hold' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return w.fetchImpl(url, init);
+  } };
+  const read = await post(wGap, 'tok-reader', { action: 'order', order_id: orderId }, WINDOW);
+  assert.equal(read.json().order.status, 'in_production', 'a read never moves the order backward');
+  assert.equal(order.status, 'in_production');
+
   const tooLate = await post(w, 'tok-reader', { action: 'cancel', order_id: orderId }, WINDOW);
   assert.equal(tooLate.statusCode, 409);
   assert.equal(tooLate.json().error, 'too_late');

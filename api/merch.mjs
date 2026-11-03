@@ -611,7 +611,10 @@ async function refreshFromPrintify(row, ctx, doFetch) {
     const status = statusFromPrintify(o);
     const tracking = (o?.shipments || []).map((s) => ({ carrier: s.carrier, number: s.number, url: s.url, delivered_at: s.delivered_at || null }));
     const patch = { tracking };
-    if (status && status !== row.status) patch.status = status;
+    // Never backward: between the sweep's claim and Printify's answer the shop
+    // still says on-hold, and a read then must not undo the claim.
+    const settled = row.status === 'in_production' || row.status === 'shipped' || row.status === 'delivered';
+    if (status && status !== row.status && !(status === 'placed' && settled)) patch.status = status;
     if (status === 'shipped' && !row.shipped_at) patch.shipped_at = new Date().toISOString();
     if (o?.sent_to_production_at && !row.sent_to_production_at) patch.sent_to_production_at = o.sent_to_production_at;
     const saved = await serviceWrite('PATCH', 'merch_orders', `id=eq.${row.id}`, patch, doFetch);
