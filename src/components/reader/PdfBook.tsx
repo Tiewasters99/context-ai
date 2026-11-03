@@ -17,6 +17,8 @@ import {
   Minimize,
   MoreHorizontal,
   Loader2,
+  Image as ImageIcon,
+  ImageOff,
 } from 'lucide-react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { PdfOpenProgress, PdfOpenProgressFn } from '@/lib/pdf-source';
@@ -194,6 +196,8 @@ export type PdfBookProps = {
   toolbarStart?: React.ReactNode;
   /** Toolbar actions after full screen, before the theme toggle (desktop). */
   toolbarEnd?: React.ReactNode;
+  /** A picture to blur behind the pages (an edition's cover). The reader can switch it off; the setting keeps on this device. */
+  backdrop?: string | null;
   /** The phone's "more" menu: between full screen and the theme toggle. */
   moreItems?: MoreItem[];
   /** Between the toolbar and the page. */
@@ -240,6 +244,7 @@ export default function PdfBook({
   title,
   toolbarStart,
   toolbarEnd,
+  backdrop = null,
   moreItems,
   banners,
   notice,
@@ -283,6 +288,10 @@ export default function PdfBook({
   const [totalPages, setTotalPages] = useState(0);
   const [zoom, setZoom] = useState(1.5);
   const [theme, setTheme] = useState<ReaderTheme>('parchment');
+  // The cover around the page: on unless this device turned it off.
+  const [surround, setSurround] = useState<boolean>(() => { try { return localStorage.getItem('reader-cover-surround') !== 'off'; } catch { return true; } });
+  const toggleSurround = () => setSurround((v) => { const next = !v; try { localStorage.setItem('reader-cover-surround', next ? 'on' : 'off'); } catch { /* ignore */ } return next; });
+  const showBackdrop = !!backdrop && surround;
 
   // Fit-page mode. When on, each page is scaled so the entire page is
   // visible at once — one screenful = exactly one PDF page, so the reader's
@@ -1938,6 +1947,15 @@ export default function PdfBook({
           >
             {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
           </button>
+          {backdrop && (
+            <button
+              onClick={toggleSurround}
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
+              title={surround ? 'Plain cloth around the page' : 'The cover around the page'}
+            >
+              {surround ? <ImageOff size={15} /> : <ImageIcon size={15} />}
+            </button>
+          )}
           {toolbarEnd}
           <button
             onClick={() => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment'))}
@@ -1952,6 +1970,7 @@ export default function PdfBook({
             <PhoneMore
               items={[
                 { icon: <Scan size={14} />, label: fitPage ? '✓ Fit the whole page' : 'Fit the whole page', run: () => setFitPage((v) => !v) },
+                ...(backdrop ? [{ icon: surround ? <ImageOff size={14} /> : <ImageIcon size={14} />, label: surround ? '✓ Cover around the page' : 'Cover around the page', run: toggleSurround }] : []),
                 { icon: isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />, label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullscreen },
                 ...(moreItems ?? []),
                 { icon: theme === 'parchment' ? <Moon size={14} /> : <Sun size={14} />, label: theme === 'parchment' ? 'Dark mode' : 'Light mode', run: () => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment')) },
@@ -1984,7 +2003,15 @@ export default function PdfBook({
           />
         )}
         <div className="flex-1 flex flex-col min-w-0">
-          <div className="relative flex-1 min-h-0 flex" onContextMenu={onContextMenu}>
+          <div className="relative flex-1 min-h-0 flex" style={{ isolation: 'isolate' }} onContextMenu={onContextMenu}>
+          {/* The cover around the page: the edition's own picture, blurred and
+              dimmed to the theme, under the pages. A switch in the toolbar. */}
+          {showBackdrop && (
+            <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+              <div className="absolute inset-0" style={{ backgroundImage: `url("${backdrop}")`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(26px) saturate(0.85)', transform: 'scale(1.12)' }} />
+              <div className="absolute inset-0" style={{ background: theme === 'dark' ? 'rgba(10,8,4,0.66)' : 'rgba(244,236,216,0.58)' }} />
+            </div>
+          )}
           {/* While a rectangle is being drawn the page is a crosshair canvas
               and text cannot be selected; say so on the page itself, with a
               way out, rather than only in the sidebar (which may be closed,
@@ -2017,7 +2044,7 @@ export default function PdfBook({
           <div
             ref={contentRef}
             className={`reader-scroll flex-1 overflow-auto flex justify-center items-start ${paneChrome ? 'py-2 px-[6px]' : 'py-6 px-4'}`}
-            style={{ backgroundColor: rootBg }}
+            style={{ backgroundColor: showBackdrop ? 'transparent' : rootBg }}
             // A selection copied off the PDF text layer would otherwise carry
             // the layer's own paint — transformed spans, transparent ink,
             // search-highlight color — into Word. Hand the clipboard the text.
