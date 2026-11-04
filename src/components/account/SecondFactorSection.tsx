@@ -20,7 +20,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useServerspacesRefresh } from '@/hooks/useServerspaces';
 import { notifyFactorStatusChanged, useFactorStatus } from '@/hooks/useFactorStatus';
 import {
-  confirmFactor, discardUnverifiedFactors, longDate, passkeysSupported, reportFactorEvent,
+  confirmFactor, discardUnverifiedFactors, passkeysSupported, reportFactorEvent,
   verifiedFactors, type VerifiedFactor,
 } from '@/lib/second-factor';
 
@@ -161,8 +161,10 @@ export default function SecondFactorSection() {
     await changed();
   };
 
+  // Eden, 2026-11-04: a second factor is for sealed matters only. Nobody is
+  // required to add one to use the rest of the site.
   const requiredLine = status?.required && !status.has_factor
-    ? `Required for your account from ${longDate(status.required_from)} — you run a workspace or work in a sealed matter.`
+    ? 'Needed only to open a sealed matter. Everything else works without one.'
     : null;
 
   const input =

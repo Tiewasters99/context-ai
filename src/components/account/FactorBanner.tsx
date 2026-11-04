@@ -1,28 +1,25 @@
-// The quiet line at the top of the app about the second factor (E2).
+// The quiet line at the top of the app about the second factor.
 //
-// Two things it can say, and it says at most one:
+// One thing it can say: "Sealed matters are hidden until you confirm it's
+// you." Migration 094 hides a sealed matter from a session that has not
+// confirmed a factor, so the sidebar and dashboard simply do not list them.
+// Silence there would read as "your matter is gone". This names no matter
+// and counts none; it says there is something to confirm, and confirms it in
+// place.
 //
-//   * "Sealed matters are hidden until you confirm it's you." — migration 094
-//     hides a sealed matter from a session that has not confirmed a factor,
-//     so the sidebar and dashboard simply do not list them. Silence there
-//     would read as "your matter is gone". This names no matter and counts
-//     none; it says there is something to confirm, and confirms it in place.
-//
-//   * "A second factor will be required for your account from 15 October." —
-//     for the people E2 names (they run a workspace, or work in a sealed
-//     matter) who have not added one. Persistent until they do, and quiet: it
-//     never covers the page and never interrupts anything.
+// It no longer says "a second factor is required for your account": Eden,
+// 2026-11-04 — the factor is for sealed matters only, nobody is required to
+// add one to use the rest of the site. The prompt at a sealed matter's door
+// (StepUpPrompt, mode 'enrol') is where someone without one learns to add it.
 //
 // Nothing renders until the database has answered, and nothing ever renders
 // if it cannot (migration 094 not pasted).
 
 import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFactorStatus } from '@/hooks/useFactorStatus';
 import { useServerspacesRefresh } from '@/hooks/useServerspaces';
-import { longDate } from '@/lib/second-factor';
 import StepUpPrompt from './StepUpPrompt';
 
 const STRIP =
@@ -31,7 +28,6 @@ const STRIP =
 export default function FactorBanner() {
   const { user } = useAuth();
   const status = useFactorStatus(user?.id);
-  const location = useLocation();
   const refreshServerspaces = useServerspacesRefresh();
   const [confirming, setConfirming] = useState(false);
 
@@ -59,24 +55,6 @@ export default function FactorBanner() {
         >
           Confirm
         </button>
-      </div>
-    );
-  }
-
-  if (status.required && !status.has_factor && !location.pathname.startsWith('/app/settings')) {
-    return (
-      <div role="status" className={`${STRIP} border-[#e8b84a]/25 bg-[#2a2412]/70 text-[#f0dfa8]`}>
-        <span className="flex-1">
-          {!status.in_force
-            ? `A second factor will be required for your account from ${longDate(status.required_from)}.`
-            : 'A second factor is required for your account.'}
-        </span>
-        <Link
-          to="/app/settings#second-factor"
-          className="underline underline-offset-2 decoration-[#e8b84a]/60 hover:text-[#fff3cf]"
-        >
-          Add one
-        </Link>
       </div>
     );
   }
