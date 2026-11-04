@@ -67,11 +67,11 @@ const openaiAdapter: ProviderAdapter = {
     if (request.system) {
       messages.unshift({ role: 'system', content: request.system });
     }
-    // GPT-5.x (and o-series) chat completions reject `max_tokens` and any
+    // GPT-5.x and later (and o-series) chat completions reject `max_tokens` and any
     // non-default temperature — they take `max_completion_tokens` and no
     // sampling params. Older chat models keep the legacy fields. This check
     // stays in the adapter so feature code never cares.
-    const modern = /^(gpt-5|o\d)/.test(model.apiModelId);
+    const modern = /^(gpt-(?:[5-9]|\d{2,})|o\d)/.test(model.apiModelId);
     return JSON.stringify({
       model: model.apiModelId,
       ...(modern
@@ -95,7 +95,7 @@ const openaiAdapter: ProviderAdapter = {
     const messages: Array<{ role: string; content: string }> = [];
     if (request.system) messages.push({ role: 'system', content: request.system });
     messages.push({ role: 'user', content: request.userContent });
-    const modern = /^(gpt-5|o\d)/.test(model.apiModelId);
+    const modern = /^(gpt-(?:[5-9]|\d{2,})|o\d)/.test(model.apiModelId);
     return JSON.stringify({
       model: model.apiModelId,
       ...(modern

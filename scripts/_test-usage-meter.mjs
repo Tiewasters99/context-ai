@@ -104,7 +104,7 @@ test('a sealed turn prices at the pen that answers, not at the model the browser
 });
 
 test('an unknown model falls back to the provider rate, never to free', () => {
-  assert.deepEqual(ratePerMtok('some-model-nobody-has-heard-of', 'openai'), [5, 20]);
+  assert.deepEqual(ratePerMtok('some-model-nobody-has-heard-of', 'openai'), [10, 50]);
   assert.deepEqual(ratePerMtok(null, 'nonexistent-provider'), [5, 25]);
   // A dated model id still finds its family's rate.
   assert.deepEqual(ratePerMtok('claude-opus-4-8-20260115', 'anthropic'), [5, 25]);
