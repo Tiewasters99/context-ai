@@ -62,8 +62,6 @@ import Support from '@/pages/Support';
 import BriefDesk from '@/pages/brief/BriefDesk';
 import BriefDeskHome from '@/pages/brief/BriefDeskHome';
 import { canOpenPath } from '@/lib/plan';
-import { useFactorStatus } from '@/hooks/useFactorStatus';
-import { signedInSince } from '@/lib/second-factor';
 
 const queryClient = new QueryClient();
 
@@ -123,30 +121,6 @@ function PlanRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// E2's second half: from the date a second factor is required, a person who
-// must have one and does not is taken to Settings to add it before the app
-// opens. Only for a sign-in that happened AFTER the date — a session that was
-// already open keeps working until it ends (never lock anyone out mid-work),
-// and the banner keeps asking. The date and "must have one" both come from
-// the database (migration 094, second_factor_status); without 094 this does
-// nothing at all.
-function FactorGate({ children }: { children: React.ReactNode }) {
-  const { user, session } = useAuth();
-  const status = useFactorStatus(user?.id);
-  const location = useLocation();
-
-  if (!status || !status.required || status.has_factor || !status.in_force) return <>{children}</>;
-  if (!signedInSince(session, status.required_from)) return <>{children}</>;
-  if (location.pathname.startsWith('/app/settings')) return <>{children}</>;
-
-  return (
-    <Navigate
-      to={{ pathname: '/app/settings', search: '?enrol=required', hash: '#second-factor' }}
-      replace
-    />
-  );
-}
-
 export default function App() {
   // Subdomain boot: at discovery.contextspaces.ai the root goes straight into
   // the standalone Discovery product instead of the Contextspaces landing page.
@@ -177,11 +151,9 @@ export default function App() {
               path="/app"
               element={
                 <ProtectedRoute>
-                  <FactorGate>
-                    <PlanRoute>
-                      <MainLayout />
-                    </PlanRoute>
-                  </FactorGate>
+                  <PlanRoute>
+                    <MainLayout />
+                  </PlanRoute>
                 </ProtectedRoute>
               }
             >
@@ -232,11 +204,9 @@ export default function App() {
               path="/discovery"
               element={
                 <ProtectedRoute>
-                  <FactorGate>
-                    <PlanRoute>
-                      <DiscoveryLayout />
-                    </PlanRoute>
-                  </FactorGate>
+                  <PlanRoute>
+                    <DiscoveryLayout />
+                  </PlanRoute>
                 </ProtectedRoute>
               }
             >
@@ -254,11 +224,9 @@ export default function App() {
               path="/connect"
               element={
                 <ProtectedRoute>
-                  <FactorGate>
-                    <PlanRoute>
-                      <ConnectLayout />
-                    </PlanRoute>
-                  </FactorGate>
+                  <PlanRoute>
+                    <ConnectLayout />
+                  </PlanRoute>
                 </ProtectedRoute>
               }
             >

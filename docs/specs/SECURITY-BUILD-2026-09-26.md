@@ -40,6 +40,7 @@ Two consequences drive the design: **every alert needs an in-app surface first**
 | --- | --- | --- | --- |
 | E1 | Transactional mail provider (Postmark / Resend / SES) — one sender for tripwire notices, the monthly review, the daily digest, and Supabase Auth mail | Pick one; the session sets it up with the key in `.env` placeholder-first | S5, S6, S8 (mail delivery); Auth mail |
 | E2 | Who must enrol a second factor, and by when | Owners/admins of every serverspace + anyone who opens a sealed matter: **required from Oct 15**; everyone else offered. Grace: existing accounts get 14 days after the slice ships. | S1 |
+| E2′ | **Revised 2026-11-04 (Eden):** a second factor is necessary for sealed matters only. The sign-in gate (FactorGate) and the "required for your account" banner are removed; the step-up at the sealed door, the enrol prompt there, and the "sealed matters are hidden" strip stay. `second_factor_status().required` and the Oct 15 date remain in the database but no longer block anyone. | S1 |
 | E3 | Session lengths | Timebox 7 days, inactivity 24 h. ⚠ The day this lands, everyone signs in again. | S1 |
 | E4 | May privileged material sit in an unsealed (Tier A) matter at all? | **No** — one mechanism: privileged = inside a sealed container (006). Then the privilege tripwire is the seal's gate, extended. | S7 |
 | E5 | Share expiry default for people outside the serverspace | 90 days, renewable in one click; **grandfather** today's 9 (Ty, Yifat, Ron…) with no expiry until Eden sets one | S4 |
