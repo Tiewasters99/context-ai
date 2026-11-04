@@ -22,7 +22,7 @@ type Mode = 'manual' | 'auto';
 
 export default function AIWorkbench({ vaultFiles, matterId, onSaveToVault }: AIWorkbenchProps) {
   const models = useMemo(() => standardModels(), []);
-  const [selectedModelId, setSelectedModelId] = useState('claude-opus-4-8');
+  const [selectedModelId, setSelectedModelId] = useState('claude-opus-5-5'); // Eden, 11-04: "5.5 default" for the Workbench
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [output, setOutput] = useState('');

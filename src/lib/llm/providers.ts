@@ -18,8 +18,7 @@ export const providers: ProviderConfig[] = [
     id: 'openai',
     name: 'OpenAI',
     models: [
-      // OpenAI's frontier (released 2026). Priced like Fable ($10/$50) but
-      // listed as a standard row at Eden's request (11-04), price in the blurb.
+      // OpenAI's frontier (released 2026), added at Eden's request 11-04.
       { id: 'gpt-6-astra', apiModelId: 'gpt-6-astra', name: 'GPT-6 Astra', description: 'OpenAI\'s frontier model — 1M context, $10/$50 per M tokens', contextWindow: 1050000, tier: 'byok', pricePerM: { input: 10, output: 50 } },
       { id: 'gpt-5.6-sol', apiModelId: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', description: 'OpenAI\'s deepest reasoning tier', contextWindow: 400000, tier: 'byok' },
       { id: 'gpt-5.6-terra', apiModelId: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', description: 'Balanced capability, speed, and cost', contextWindow: 400000, tier: 'byok' },
