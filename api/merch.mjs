@@ -422,7 +422,10 @@ async function make(req, res, { bearer, user, body, ctx, doFetch }) {
   };
 
   try {
-    const image = await uploadImageToPrintify({ file_url: imageUrl }, ctx);
+    // Printify's upload takes a file name and a url (not file_url: that
+    // shape answers 422 "Validation failed.").
+    const fileName = decodeURIComponent(imageUrl.split('?')[0].split('/').pop() || '') || 'picture.png';
+    const image = await uploadImageToPrintify({ file_name: fileName, url: imageUrl }, ctx);
     if (!image?.id) return fail(502, 'printify_error', 'Printify did not take the picture.');
 
     const catalog = await getBlueprintVariants(blueprint.blueprint_id, blueprint.provider_id, ctx);

@@ -94,8 +94,12 @@ export default function MerchSheet({ open, userId, returnPath, onClose, deps }: 
       role="dialog"
       aria-label="Tee, tote or print"
       data-card-dialog="cs.reader.merchSheet"
-      className={`${isMobile ? 'fixed inset-0' : 'fixed'} z-40 flex flex-col overflow-hidden border border-[rgba(255,255,255,0.12)] bg-[#0c0c13]/[0.96] text-[#e8e4de] shadow-2xl backdrop-blur-md ${isMobile ? '' : 'rounded-xl'}`}
-      style={isMobile ? undefined : { right: 16, top: 72, width: 420, height: 'calc(100vh - 96px)', maxHeight: 'calc(100vh - 96px)' }}
+      // The desktop geometry lives in classes, not inline style: the drag
+      // hook clears a card's inline position/size when it mounts, and an
+      // inline `top` cleared that way left the sheet at its static place in
+      // the page, below the fold on the Spotlight. A saved or dragged
+      // position is inline and still outranks these.
+      className={`${isMobile ? 'fixed inset-0' : 'fixed right-4 top-[72px] w-[420px] h-[calc(100vh-96px)] max-h-[calc(100vh-96px)]'} z-40 flex flex-col overflow-hidden border border-[rgba(255,255,255,0.12)] bg-[#0c0c13]/[0.96] text-[#e8e4de] shadow-2xl backdrop-blur-md ${isMobile ? '' : 'rounded-xl'}`}
     >
       {/* Ribbon: the drag handle. */}
       <div data-card-ribbon="" className={`shrink-0 border-b border-[rgba(255,255,255,0.08)] px-4 pt-1.5 pb-2.5 ${isMobile ? '' : 'cursor-grab'}`}>
