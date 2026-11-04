@@ -7,7 +7,8 @@ export const providers: ProviderConfig[] = [
     models: [
       // First entry is the fallback default (models[0]) — keep Opus 4.8 here.
       { id: 'claude-opus-4-8', apiModelId: 'claude-opus-4-8', name: 'Claude Opus 4.8', description: 'Most capable Opus — complex reasoning, long documents, structured analysis', contextWindow: 1000000, tier: 'pro' },
-      { id: 'claude-opus-5', apiModelId: 'claude-opus-5', name: 'Claude Opus 5', description: 'Newest Opus — deep reasoning and agentic work, same price as 4.8', contextWindow: 1000000, tier: 'pro' },
+      { id: 'claude-opus-5-5', apiModelId: 'claude-opus-5-5', name: 'Claude Opus 5.5', description: 'Newest Opus — Fable-level on most work at $4/$20 per M tokens, 1M context', contextWindow: 1000000, tier: 'pro', pricePerM: { input: 4, output: 20 } },
+      { id: 'claude-opus-5', apiModelId: 'claude-opus-5', name: 'Claude Opus 5', description: 'Deep reasoning and agentic work, same price as 4.8', contextWindow: 1000000, tier: 'pro' },
       // premium: 2x Opus pricing — only cost-insensitive surfaces (Moot Bench) offer it.
       { id: 'claude-fable-5', apiModelId: 'claude-fable-5', name: 'Claude Fable 5', description: 'Anthropic\'s most capable model — deepest reasoning, priced at 2x Opus', contextWindow: 1000000, tier: 'pro', premium: true },
       { id: 'claude-sonnet', apiModelId: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', description: 'Fast and capable — great for most tasks', contextWindow: 1000000, tier: 'free' },
@@ -17,6 +18,9 @@ export const providers: ProviderConfig[] = [
     id: 'openai',
     name: 'OpenAI',
     models: [
+      // OpenAI's frontier (released 2026). Priced like Fable ($10/$50) but
+      // listed as a standard row at Eden's request (11-04), price in the blurb.
+      { id: 'gpt-6-astra', apiModelId: 'gpt-6-astra', name: 'GPT-6 Astra', description: 'OpenAI\'s frontier model — 1M context, $10/$50 per M tokens', contextWindow: 1050000, tier: 'byok', pricePerM: { input: 10, output: 50 } },
       { id: 'gpt-5.6-sol', apiModelId: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', description: 'OpenAI\'s deepest reasoning tier', contextWindow: 400000, tier: 'byok' },
       { id: 'gpt-5.6-terra', apiModelId: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', description: 'Balanced capability, speed, and cost', contextWindow: 400000, tier: 'byok' },
       { id: 'gpt-5.6-luna', apiModelId: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', description: 'Fastest and lowest-cost of the GPT-5.6 family', contextWindow: 400000, tier: 'byok' },
@@ -29,6 +33,10 @@ export const providers: ProviderConfig[] = [
     id: 'google',
     name: 'Google',
     models: [
+      // Google's current flagship (API release 2026-10-13): one 1,048,576-token
+      // window shared by input, thinking and output. $2/$10 introductory
+      // through 2026-11-30, then $4/$20 (the rate the meter uses).
+      { id: 'gemini-4-argon', apiModelId: 'gemini-4-argon', name: 'Gemini 4 Argon', description: 'Google\'s most capable Gemini — 1M-token context, $4/$20 per M tokens', contextWindow: 1048576, tier: 'byok', pricePerM: { input: 4, output: 20 } },
       // The ids below are catalog keys that saved choices point at (findModel), so
       // they stay; what is sent to Google is apiModelId. Google retired the 2.5
       // ids for new projects (404 "no longer available to new users", 2026-10-19).
