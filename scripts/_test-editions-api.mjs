@@ -23,7 +23,7 @@ process.env.VITE_SUPABASE_URL = 'https://example.supabase.co';
 process.env.VITE_SUPABASE_ANON_KEY = 'anon-key';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
 
-const { default: handler, pathInEdition, URL_TTL_SECONDS } = await import('../api/editions.mjs');
+const { default: handler, pathInEdition, storagePathForUrl, URL_TTL_SECONDS } = await import('../api/editions.mjs');
 
 const EDITION = '11111111-2222-4333-8444-555555555555';
 const PUBLISHER = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -39,7 +39,8 @@ const DOC_WORD = '55555555-8888-4999-8aaa-bbbbbbbbbbbb';
 const MATTER_OPEN = '12121212-3434-4565-8787-989898989898';
 const MATTER_SEALED = '21212121-4343-4656-8878-898989898989';
 
-function fakeSupabase({ canRead = () => false, version = 1 } = {}) {
+function fakeSupabase(opts = {}) {
+  const { canRead = () => false, version = 1 } = opts;
   const calls = [];
   const fetchImpl = async (url, init = {}) => {
     const u = new URL(url);
@@ -92,7 +93,7 @@ function fakeSupabase({ canRead = () => false, version = 1 } = {}) {
     if (u.pathname === '/rest/v1/edition_assets') {
       if (!isService) return respond(401, { message: 'service only' });
       const p = u.searchParams;
-      if (p.get('kind') === 'eq.book') return respond(200, [{ id: 'asset-book', storage_path: BOOK_PATH, bytes: 1234, mime: 'application/pdf' }]);
+      if (p.get('kind') === 'eq.book') return respond(200, [{ id: 'asset-book', storage_path: opts.bookPath ?? BOOK_PATH, bytes: 1234, mime: 'application/pdf' }]);
       const want = p.get('storage_path')?.replace(/^eq\./, '');
       return respond(200, want === CLIP_PATH || want === BOOK_PATH ? [{ id: 'asset-x' }] : []);
     }
@@ -205,6 +206,24 @@ test('book: the publisher gets a signed URL for the book asset, with the service
   assert.equal(sign.auth, 'Bearer service-key');
   assert.equal(sign.body.expiresIn, URL_TTL_SECONDS);
   assert.equal(res.headers['cache-control'], 'no-store');
+});
+
+test('storagePathForUrl: a comma, an apostrophe or parentheses stay as they are (Storage signs one spelling and checks another); spaces, # and ? are encoded', () => {
+  assert.equal(storagePathForUrl(`${EDITION}/book/mvyrj9cl-Kunstformen der Natur - Cleaned, Vol I.pdf`),
+    `${EDITION}/book/mvyrj9cl-Kunstformen%20der%20Natur%20-%20Cleaned,%20Vol%20I.pdf`);
+  assert.equal(storagePathForUrl(`${EDITION}/book/x-Other people's money (1914).pdf`), `${EDITION}/book/x-Other%20people's%20money%20(1914).pdf`);
+  assert.equal(storagePathForUrl(`${EDITION}/book/a#b?c.pdf`), `${EDITION}/book/a%23b%3Fc.pdf`);
+  assert.equal(storagePathForUrl(BOOK_PATH), BOOK_PATH);
+});
+
+test('book: a title with a comma is signed with the comma itself, never %2C', async () => {
+  const commaPath = `${EDITION}/book/mvyrj9cl-Kunstformen der Natur - Cleaned, Vol I.pdf`;
+  const fake = fakeSupabase({ canRead: (uid) => uid === PUBLISHER, bookPath: commaPath });
+  const res = await call(request({ bearer: 'tok-publisher', body: { edition_id: EDITION, action: 'book' } }), fake);
+  assert.equal(res.statusCode, 200, res.body);
+  const sign = fake.calls.find((c) => c.path.startsWith('/storage/v1/object/sign/'));
+  assert.ok(sign.path.includes('Cleaned,%20Vol%20I.pdf'), sign.path);
+  assert.ok(!sign.path.includes('%2C'), sign.path);
 });
 
 test('book: a free published edition is readable by any signed-in reader (112 says so)', async () => {

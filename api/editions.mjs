@@ -142,9 +142,21 @@ function safeName(name) {
   return cleaned.slice(-120) || 'book.pdf';
 }
 
+/** The object path as Storage's router reads it. Storage signs the path as it
+ *  decodes it, but its router leaves a reserved character that arrives
+ *  percent-encoded (a comma as %2C, an apostrophe as %27, parentheses) encoded,
+ *  so the token is minted for one spelling and checked against another and
+ *  the download answers 400 InvalidSignature. encodeURI leaves those characters
+ *  alone, which is also what supabase-js sends; only the two that would end the
+ *  path early are encoded on top. Filenames come from the sanitiser above, so
+ *  slashes and the rest never reach here. */
+export function storagePathForUrl(objectPath) {
+  return encodeURI(String(objectPath)).replace(/#/g, '%23').replace(/\?/g, '%3F');
+}
+
 /** Service-role signed URL, in supabase-js's shape (…/storage/v1/object/sign/…?token=…). */
 async function mintSignedUrl(objectPath, doFetch) {
-  const encoded = objectPath.split('/').map(encodeURIComponent).join('/');
+  const encoded = storagePathForUrl(objectPath);
   try {
     const res = await doFetch(`${base()}/storage/v1/object/sign/${BUCKET}/${encoded}`, {
       method: 'POST',
