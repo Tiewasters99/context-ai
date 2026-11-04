@@ -25,6 +25,7 @@ import {
   Loader2,
   Send,
   PenLine,
+  Upload,
   BookMarked,
 } from 'lucide-react';
 import mammoth from 'mammoth';
@@ -37,6 +38,8 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
 import { opensOnDesk } from '@/lib/brief/draft-store';
 import { openInWord, isWordFile } from '@/lib/open-in-word';
+import { readDocxTag } from '@/lib/docx-tag';
+import { saveDocxVersion, listVersions, nextVersionLabel } from '@/lib/document-versions';
 import VersionsMenu from '@/components/reader/VersionsMenu';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import { storageObjectBlob, downloadDocumentFile, isStepUpRequired } from '@/lib/vault-object';
@@ -1430,6 +1433,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     try {
       await openInWord({ id: doc.id, matterspace_id: doc.matterspace_id ?? null, source_filename: doc.source_filename, title: doc.title });
       setCopyNote(null);
+      setWordNote(`Sent to Word: ${doc.source_filename || 'the file'} is in your Downloads; open it from the download bar. When you are done, save in Word and press Import from Word here.`);
     } catch (e) {
       if (isStepUpRequired(e)) {
         setStepUp({ mode: e.mode, matterId: e.matterId ?? doc.matterspace_id ?? null, retry: 'word' });
@@ -1440,6 +1444,46 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       setOpeningWord(false);
     }
   }, [doc, openingWord]);
+
+  // Work in Word / Import from Word without the add-in (the interim flow,
+  // docs/specs/WORD-ROUNDTRIP-2026-11-01.md "Without the add-in"): the file
+  // comes back through a picker, its tag says which document it is, and it
+  // is stored as the next version by the same save the pane uses.
+  const [wordNote, setWordNote] = useState<string | null>(null);
+  const [importPick, setImportPick] = useState<{ file: File; bytes: Uint8Array; label: string; untagged: boolean } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const importRef = useRef<HTMLInputElement>(null);
+  const handleImportFile = useCallback(async (file: File) => {
+    if (!doc) return;
+    setWordNote(null);
+    setErrorMsg(null);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const tag = await readDocxTag(bytes);
+      if (tag && tag.documentId !== doc.id) {
+        setErrorMsg('That file is a different Equazia document (it carries another document\u2019s tag). Open that document and import it there.');
+        return;
+      }
+      const versions = await listVersions(doc.id);
+      setImportPick({ file, bytes, label: nextVersionLabel(versions, !!doc.storage_path), untagged: !tag });
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'The file could not be read.');
+    }
+  }, [doc]);
+  const handleImportSave = useCallback(async () => {
+    if (!doc || !importPick || importing) return;
+    setImporting(true);
+    try {
+      const v = await saveDocxVersion({ documentId: doc.id, bytes: importPick.bytes, filename: importPick.file.name, label: importPick.label });
+      setImportPick(null);
+      setWordNote(`Saved as ${v.label}. Re-reading the document\u2026`);
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'The version could not be saved.');
+    } finally {
+      setImporting(false);
+    }
+  }, [doc, importPick, importing]);
 
   // ── The book's three doors (src/components/reader/PdfBook.tsx) ─────
   // The matter's data, handed to the book through the three interfaces it
@@ -2491,14 +2535,26 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         <Printer size={15} />
       </button>
       {doc && isWordFile(doc.source_filename ?? doc.storage_path) && (
-        <button
-          onClick={() => void handleOpenInWord()}
-          disabled={openingWord || !doc.storage_path}
-          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-[12px] text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Open in Word — the file opens in Word on this computer; Save to Equazia in the Equazia pane there puts your edits back here as a new version"
-        >
-          {openingWord ? <Loader2 size={14} className="animate-spin" /> : <PenLine size={14} />} <span className="hidden md:inline">Open in Word</span>
-        </button>
+        <>
+          <button
+            onClick={() => void handleOpenInWord()}
+            disabled={openingWord || !doc.storage_path}
+            className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-[12px] text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Work in Word — the file goes to your Downloads and opens in Word; when you are done, Import from Word brings it back as the next version"
+          >
+            {openingWord ? <Loader2 size={14} className="animate-spin" /> : <PenLine size={14} />} <span className="hidden md:inline">Work in Word</span>
+          </button>
+          <button
+            onClick={() => importRef.current?.click()}
+            disabled={importing || !doc.storage_path}
+            className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-[12px] text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Import from Word — choose the .docx you edited in Word; it is stored here as the next version of this document"
+          >
+            {importing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />} <span className="hidden md:inline">Import from Word</span>
+          </button>
+          <input ref={importRef} type="file" accept=".docx" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void handleImportFile(f); }} />
+        </>
       )}
       {doc && (doc.editor === 'word' || isWordFile(doc.source_filename ?? doc.storage_path)) && (
         <VersionsMenu documentId={doc.id} currentPath={doc.storage_path} onNote={(text, tone) => { if (tone === 'error') setErrorMsg(text); else setCopyNote(text); }} />
@@ -2540,7 +2596,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     { icon: <FileText size={14} />, label: fileKind === 'image' ? 'Copy the picture' : 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl) },
     { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: () => void handlePrint(), disabled: printing || loadState !== 'ready' },
     ...(doc && isWordFile(doc.source_filename ?? doc.storage_path) ? [
-      { icon: <PenLine size={14} />, label: 'Open in Word', run: () => void handleOpenInWord(), disabled: openingWord || !doc.storage_path },
+      { icon: <PenLine size={14} />, label: 'Work in Word', run: () => void handleOpenInWord(), disabled: openingWord || !doc.storage_path },
+      { icon: <Upload size={14} />, label: 'Import from Word', run: () => importRef.current?.click(), disabled: importing || !doc.storage_path },
     ] : []),
     { icon: <Download size={14} />, label: 'Download the original', run: () => void handleDownload(), disabled: downloading || !doc?.storage_path },
     ...(connectedDrives.length
@@ -2561,6 +2618,35 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   // Between the toolbar and the page: what a copy, a save or an export said.
   const banners = (
     <>
+      {wordNote && (
+        <div className="flex items-center gap-3 px-3 py-2 text-xs border-b border-[var(--color-border)] bg-[#e8b84a]/10 text-[#f3c978]" role="status">
+          <span className="flex-1 min-w-0">{wordNote}</span>
+          <button onClick={() => setWordNote(null)} className="opacity-70 hover:opacity-100" aria-label="Dismiss">
+            <X size={12} />
+          </button>
+        </div>
+      )}
+      {importPick && (
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs border-b border-[var(--color-border)] bg-[#e8b84a]/10 text-[#e8e4de]" role="status">
+          <span className="min-w-0 truncate">
+            Import <span className="text-white">{importPick.file.name}</span> as version
+            {importPick.untagged ? ' (this file was not sent from Equazia; import it only if it is this document edited in Word)' : ''}
+          </span>
+          <input
+            value={importPick.label}
+            onChange={(e) => setImportPick({ ...importPick, label: e.target.value.slice(0, 80) })}
+            className="w-20 rounded bg-white/[0.06] border border-white/15 px-1.5 py-0.5 text-[12px] text-white outline-none focus:border-[#e8b84a]/60"
+            aria-label="Version label"
+          />
+          <button onClick={() => void handleImportSave()} disabled={importing || !importPick.label.trim()}
+            className="px-2 py-0.5 rounded bg-[#e8b84a] text-black font-medium disabled:opacity-50">
+            {importing ? 'Saving\u2026' : 'Save'}
+          </button>
+          <button onClick={() => setImportPick(null)} disabled={importing} className="opacity-70 hover:opacity-100" aria-label="Cancel">
+            <X size={12} />
+          </button>
+        </div>
+      )}
       {copyState === 'failed' && copyNote && (
         <div className="flex items-center gap-3 px-3 py-2 text-xs border-b border-[var(--color-border)] bg-red-400/10 text-red-300" role="status">
           <span className="flex-1 min-w-0">{copyNote}</span>

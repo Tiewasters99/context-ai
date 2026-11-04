@@ -554,7 +554,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
         // A Word file opens in Word, tagged so the Equazia pane there knows it
         // (docs/specs/WORD-ROUNDTRIP-2026-11-01.md).
         ...(ids.length === 1 && isWordFile(file.name) ? [{
-          label: 'Open in Word',
+          label: 'Work in Word',
           onSelect: () => {
             void openInWord({ id: file.id, matterspace_id: file.matterspace_id ?? null, source_filename: file.name, title: file.name })
               .catch((e: unknown) => report({ ok: false, text: e instanceof Error ? e.message : 'The file could not be opened in Word.' }));
