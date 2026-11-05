@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, X, Loader2, Copy, StickyNote, MessageCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, Loader2, Copy, StickyNote, MessageCircle, Send } from 'lucide-react';
 import type { PdfOpenProgress } from '@/lib/pdf-source';
 import type { AnnotationColor } from '@/lib/document-annotations';
 import { ANNOTATION_DOT } from '@/lib/reader-style';
@@ -219,6 +219,7 @@ export function SelectionMenu({
   onPick,
   onCopy,
   onNote,
+  onSend,
   onCancel,
 }: {
   x: number;
@@ -227,6 +228,8 @@ export function SelectionMenu({
   onPick: (color: AnnotationColor) => void;
   onCopy: () => void;
   onNote?: () => void;
+  /** Send the passage to someone; shown only where the host can. */
+  onSend?: () => void;
   onCancel: () => void;
 }) {
   const colors: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
@@ -262,6 +265,15 @@ export function SelectionMenu({
           title="Add a margin note"
         >
           <StickyNote size={14} />
+        </button>
+      )}
+      {onSend && (
+        <button
+          onClick={onSend}
+          className="h-5 px-1 inline-flex items-center justify-center rounded text-white/70 hover:text-[#e8b84a] transition"
+          title="Send this passage to someone"
+        >
+          <Send size={14} />
         </button>
       )}
       {onAsk && (

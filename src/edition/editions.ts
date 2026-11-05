@@ -422,12 +422,12 @@ export function editionMarks(edition: Edition): MarksStore {
       if (error) { console.warn('[edition marks] list failed:', error.message); return []; }
       return ((data ?? []) as MarkRow[]).map(annotationOf);
     },
-    create: async ({ page, color, rects, anchorText }) => {
+    create: async ({ page, color, rects, anchorText, note }) => {
       const uid = (await supabase.auth.getUser()).data.user?.id;
       if (!uid) return null;
       const { data, error } = await supabase
         .from('edition_marks')
-        .insert({ user_id: uid, edition_id: editionId, page, color, rects, anchor_text: anchorText || null })
+        .insert({ user_id: uid, edition_id: editionId, page, color, rects, anchor_text: anchorText || null, note: note?.trim() ? note.trim() : null })
         .select(MARK_SELECT).single();
       if (error || !data) { console.warn('[edition marks] create failed:', error?.message); return null; }
       return annotationOf(data as MarkRow);

@@ -91,7 +91,7 @@ export type PdfSource = {
 /** The reader's own highlights: document_annotations in Contextspaces, edition_marks in the Reader. */
 export type MarksStore = {
   list(): Promise<Annotation[]>;
-  create(args: { page: number; color: AnnotationColor; rects: FractionalRect[]; anchorText: string }): Promise<Annotation | null>;
+  create(args: { page: number; color: AnnotationColor; rects: FractionalRect[]; anchorText: string; note?: string | null }): Promise<Annotation | null>;
   update(id: string, patch: { color: AnnotationColor }): Promise<boolean>;
   remove(id: string): Promise<boolean>;
   /** Marks are collaborative in Contextspaces; a change by someone else arrives here. Returns the unsubscribe. */
@@ -218,6 +218,8 @@ export type PdfBookProps = {
   onAsk?: (text: string, page: number) => void;
   /** The selection menu's Note; absent = no Note button. */
   onNote?: (selection: BookSelection) => void;
+  /** The selection menu's Send (the passage to someone, by the host's means); absent = no Send button. */
+  onSend?: (selection: BookSelection) => void;
   /** The selection menu's Copy, where the host reports the outcome (its toolbar's copy state); absent = a quiet copy. */
   onCopySelection?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -257,6 +259,7 @@ export default function PdfBook({
   merch = false,
   onAsk,
   onNote,
+  onSend,
   onCopySelection,
   onContextMenu,
   onOpened,
@@ -2238,6 +2241,11 @@ export default function PdfBook({
           onCopy={onCopySelection ?? (() => void quietCopySelection())}
           onNote={onNote ? () => {
             onNote(selectionMenu);
+            window.getSelection()?.removeAllRanges();
+            setSelectionMenu(null);
+          } : undefined}
+          onSend={onSend ? () => {
+            onSend(selectionMenu);
             window.getSelection()?.removeAllRanges();
             setSelectionMenu(null);
           } : undefined}
