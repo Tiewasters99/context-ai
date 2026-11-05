@@ -13,19 +13,18 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Search } from 'lucide-react';
-import { GUIDE, ROOMS, lookupGuide } from '../../lib/orchestrator-guide.mjs';
+import { GUIDE, ROOMS, guideTokens, lookupGuide } from '../../lib/orchestrator-guide.mjs';
 
 const serif = { fontFamily: '"Playfair Display Variable", serif' } as const;
 
 export default function Help() {
   const [q, setQ] = useState('');
-  const query = q.trim();
-  // A question narrows the page to its best answers; otherwise every entry, by room.
-  const shown = useMemo(() => {
-    if (!query) return GUIDE;
-    const hits = lookupGuide(query, undefined, 12);
-    return hits.length ? hits : [];
-  }, [query]);
+  const typed = q.trim();
+  // A question narrows the page to its best answers; otherwise every entry, by
+  // room. The first keystrokes are not a question yet — the whole page stays
+  // until a word is there, so "s", "se", "sel" never flash "nothing answers that".
+  const query = guideTokens(typed).length > 0 && typed.length >= 3 ? typed : '';
+  const shown = useMemo(() => (query ? lookupGuide(query, undefined, 12) : GUIDE), [query]);
   const rooms = ROOMS.filter((r) => shown.some((e) => e.room === r));
 
   return (
