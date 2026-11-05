@@ -90,7 +90,8 @@ export default function Support() {
         </Section>
 
         <p className="mt-12 text-[12px] text-[#5a5665]">
-          See also: <Link to="/privacy" className="text-[#8a8694] underline underline-offset-2">Privacy</Link> ·{' '}
+          See also: <Link to="/help" className="text-[#8a8694] underline underline-offset-2">Help</Link> ·{' '}
+          <Link to="/privacy" className="text-[#8a8694] underline underline-offset-2">Privacy</Link> ·{' '}
           <Link to="/terms" className="text-[#8a8694] underline underline-offset-2">Terms of Service</Link>.
         </p>
       </div>
