@@ -134,10 +134,13 @@ test('the bar never runs backwards within a stage as pages accumulate', () => {
 
 test('the explanation names the three things that take the time', () => {
   for (const s of [INGEST_WHY, INGEST_WHY_SHORT]) {
-    assert.match(s, /read/i);
     assert.match(s, /OCR/);
     assert.match(s, /index/i);
   }
+  assert.match(INGEST_WHY, /read/i);
+  // Eden, 11-04: three words beside the bar, and never "so the AI can cite it".
+  assert.match(INGEST_WHY_SHORT, /citable/);
+  assert.doesNotMatch(INGEST_WHY_SHORT, /so the AI/);
   assert.match(INGEST_WHY, /opened and read while/);
   assert.ok(INGEST_WHY_SHORT.length < 60, 'fits beside the bar');
 });
