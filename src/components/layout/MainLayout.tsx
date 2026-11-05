@@ -10,6 +10,7 @@ import RefusalBanner from '@/components/ui/RefusalBanner';
 import FactorBanner from '@/components/account/FactorBanner';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ASSISTANT_COMMAND_EVENT } from '@/lib/assistant-bus';
+import { OPEN_CONVERSATION_EVENT } from '@/lib/orchestrator-conversations';
 import { ASSISTANT_THE } from '@/components/ai/assistant-scope';
 
 export default function MainLayout() {
@@ -37,7 +38,12 @@ export default function MainLayout() {
   useEffect(() => {
     const open = () => setAssistantOpen(true);
     window.addEventListener(ASSISTANT_COMMAND_EVENT, open);
-    return () => window.removeEventListener(ASSISTANT_COMMAND_EVENT, open);
+    // Reopening a saved conversation from the sidebar opens the panel too.
+    window.addEventListener(OPEN_CONVERSATION_EVENT, open);
+    return () => {
+      window.removeEventListener(ASSISTANT_COMMAND_EVENT, open);
+      window.removeEventListener(OPEN_CONVERSATION_EVENT, open);
+    };
   }, []);
 
   return (
