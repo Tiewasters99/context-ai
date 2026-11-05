@@ -33,7 +33,7 @@ process.env.VITE_SUPABASE_URL = 'https://example.supabase.co';
 process.env.VITE_SUPABASE_ANON_KEY = 'anon-key';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
 
-const { default: merch, priceCents, imageUrlIsMine, readPrintifyProduct } = await import('../api/merch.mjs');
+const { default: merch, priceCents, imageUrlIsMine, readPrintifyProduct, chooseVariants, MAX_VARIANTS } = await import('../api/merch.mjs');
 const { default: webhook, addressFromSession } = await import('../api/grapheon-webhook.mjs');
 const { default: release } = await import('../api/merch-release.mjs');
 
@@ -714,4 +714,23 @@ test('sweep: does nothing unless MERCH_SEND_TO_PRODUCTION=window; with CRON_SECR
   assert.equal(opened.json().released, 1);
   assert.equal(order.status, 'in_production');
   assert.equal(order.error, null);
+});
+
+test('chooseVariants: at most 100 enabled, whole colours, the classic shades first (Printify error 8251)', () => {
+  const sizes = ['S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'];
+  const colours = ['Aqua', 'Berry', 'Black', 'Cardinal', 'Charity Pink', 'Daisy', 'Forest Green', 'Gold', 'Heather Grey', 'Kelly', 'Lilac', 'Maroon', 'Navy', 'Natural', 'Orange', 'Purple', 'Red', 'Royal', 'Sand', 'Teal', 'White'];
+  const catalog = [];
+  let id = 1;
+  for (const c of colours) for (const sz of sizes) catalog.push({ id: id++, title: `${c} / ${sz}`, options: { color: c, size: sz } });
+  assert.equal(catalog.length, 147);
+  const kept = chooseVariants(catalog);
+  assert.ok(kept.length <= MAX_VARIANTS, String(kept.length));
+  const keptColours = [...new Set(kept.map((v) => v.options.color))];
+  // Whole colours: every kept colour has all seven sizes.
+  for (const c of keptColours) assert.equal(kept.filter((v) => v.options.color === c).length, 7, c);
+  // The classics are in; the cap is filled as far as whole colours allow (14 × 7 = 98).
+  for (const c of ['White', 'Black', 'Navy', 'Natural', 'Heather Grey']) assert.ok(keptColours.includes(c), c);
+  assert.equal(kept.length, 98);
+  // A small catalogue is kept entire, in its own order.
+  assert.deepEqual(chooseVariants(catalog.slice(0, 20)), catalog.slice(0, 20));
 });
