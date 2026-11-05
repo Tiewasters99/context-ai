@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  GUIDE, GUIDE_TOOL, guideForPlan, guideIndex, lookupGuide, renderGuide, guidePromptBlock,
+  GUIDE, GUIDE_TOOL, ROOMS, guideForPlan, guideIndex, lookupGuide, renderGuide, guidePromptBlock,
 } from '../lib/orchestrator-guide.mjs';
 import { PLANS, canOpenPathname, surfaceForPathname } from '../lib/surfaces.mjs';
 import { orchestratorMenu } from '../lib/assistant-core.mjs';
@@ -25,7 +25,11 @@ test('every entry is whole: id, title, asks, text, and unique ids', () => {
     assert.ok(Array.isArray(e.asks) && e.asks.length >= 3, `${e.id}: at least three phrasings`);
     assert.ok(e.text.length > 120 && e.text.length < 2000, `${e.id}: text ${e.text.length} chars`);
     assert.ok(Array.isArray(e.routes), `${e.id}: routes`);
+    assert.ok(ROOMS.includes(e.room), `${e.id}: room "${e.room}" is not on the Help page`);
+    // The text a person reads on /help carries no tool names; those go in `orchestrator`.
+    assert.doesNotMatch(e.text, /\b[a-z]+_[a-z_]+\b/, `${e.id}: tool name in the human text`);
   }
+  for (const r of ROOMS) assert.ok(GUIDE.some((e) => e.room === r), `room "${r}" has no entries`);
 });
 
 test('every route an entry names is a room the router knows', () => {
@@ -52,19 +56,23 @@ test("Eden's question finds the moving entry first, and the lookup never invents
   assert.ok(hits.length >= 1);
   assert.equal(hits[0].id, 'move-documents-sub-matter');
   assert.match(renderGuide(hits), /Select all/);
-  assert.match(renderGuide(hits), /move_document proposes ONE document/);
+  assert.match(renderGuide(hits), /For you: In this panel, move_document proposes ONE document/);
   assert.deepEqual(lookupGuide('quantum chromodynamics'), [], 'nothing shared, nothing returned');
   assert.deepEqual(lookupGuide(''), []);
   assert.ok(lookupGuide('dark mode').some((e) => e.id === 'reader-light-dark'));
   assert.ok(lookupGuide('why is it asking me for a two factor code')[0].id === 'second-factor-sealed-only');
   assert.ok(lookupGuide('open this docx in Word and save a version')[0].id === 'work-in-word-import');
   assert.ok(lookupGuide('anything at all', undefined, 3).length <= 3);
+  assert.equal(lookupGuide('how do I highlight and leave a note for my team')[0].id, 'reader-highlight-note');
+  assert.equal(lookupGuide('send this page to a colleague')[0].id, 'reader-send-to-colleague');
+  assert.equal(lookupGuide('what does the paper plane button do')[0].id, 'reader-delegate');
 });
 
 test('the prompt block names the tool and lists what the guide covers', () => {
   const block = guidePromptBlock('free');
   assert.match(block, /app_guide/);
   assert.match(block, /relay_feedback/);
+  assert.match(block, /\/help/);
   for (const t of guideIndex('free')) assert.ok(block.includes(t), `lists "${t}"`);
 });
 

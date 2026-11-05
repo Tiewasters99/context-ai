@@ -59,6 +59,7 @@ import GptConnect from '@/pages/GptConnect';
 import Privacy from '@/pages/Privacy';
 import Terms from '@/pages/Terms';
 import Support from '@/pages/Support';
+import Help from '@/pages/Help';
 import BriefDesk from '@/pages/brief/BriefDesk';
 import BriefDeskHome from '@/pages/brief/BriefDeskHome';
 import { canOpenPath } from '@/lib/plan';
@@ -145,6 +146,8 @@ export default function App() {
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/support" element={<Support />} />
+            {/* Public: the field guide, the same entries the Orchestrator answers from. */}
+            <Route path="/help" element={<Help />} />
             {/* Public: a production sent by link (migration 115); the link is the key. */}
             <Route path="/p/:token" element={<SharedProduction />} />
             <Route
