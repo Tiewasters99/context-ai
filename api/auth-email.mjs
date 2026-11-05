@@ -323,24 +323,29 @@ export default async function handler(req, res, deps = {}) {
   const brand = brandFor(emailData.redirect_to);
   const from = String(env[brand.fromEnv] || '').trim() || brand.from;
 
-  for (const m of mails) {
+  const send = async (m) => {
     let r;
     try {
       r = await doFetch(RESEND_ENDPOINT, {
         method: 'POST',
-        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        headers: { authorization: 'Bearer ' + apiKey, 'content-type': 'application/json' },
         body: JSON.stringify({ from, to: [m.to], subject: m.subject, text: m.text, html: m.html }),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
     } catch (e) {
-      console.error(`[auth-email] Resend unreachable for ${emailData.email_action_type}: ${e?.message || e}`);
-      return json(res, 502, { error: 'send_failed' });
+      console.error('[auth-email] Resend unreachable for ' + emailData.email_action_type + ': ' + (e?.message || e));
+      return false;
     }
     if (!r.ok) {
       const detail = await r.text().catch(() => '');
-      console.error(`[auth-email] Resend ${r.status} for ${emailData.email_action_type}: ${detail.slice(0, 300)}`);
-      return json(res, 502, { error: 'send_failed' });
+      console.error('[auth-email] Resend ' + r.status + ' for ' + emailData.email_action_type + ': ' + detail.slice(0, 300));
+      return false;
     }
-  }
+    return true;
+  };
+  // The mails go out together: a secure email change is two of them, and the
+  // hook has only a few seconds before Supabase gives up on it.
+  const results = await Promise.all(mails.map(send));
+  if (results.some((ok) => !ok)) return json(res, 502, { error: 'send_failed' });
   return json(res, 200, {});
 }
