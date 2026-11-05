@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, List, Film, Plus, Trash2, Hammer } from 'lucide-react';
 import type { DocumentAnimation } from '@/lib/document-animations';
 import WorkshopPanel, { type WorkshopPanelProps } from './WorkshopPanel';
@@ -34,6 +35,17 @@ type Props = {
 
 export type SidebarTabId = 'pages' | 'contents' | 'animations' | 'workshop';
 
+const MIN_W = 200;
+/** A width this device chose for the column, or null for the default. */
+function readWidth(key: string): number | null {
+  try {
+    const n = Number(localStorage.getItem(key));
+    return Number.isFinite(n) && n >= MIN_W ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ReaderSidebar({
   totalPages,
   currentPage,
@@ -64,11 +76,61 @@ export default function ReaderSidebar({
   // is just wide enough for its labels; without one, three fit in 240px.
   const wide = tab === 'workshop';
   const narrow = workshop ? 'w-[310px]' : 'w-60';
+  // The border is a handle: drag it and the column takes the width you give
+  // it, kept on this device (Eden, 2026-11-03: the bench should be able to
+  // fill the empty cloth beside the page). Each kind of column — the bench,
+  // and the lists — remembers its own width; untouched, the defaults above.
+  const widthKey = wide ? 'reader-sidebar-w:bench' : 'reader-sidebar-w:lists';
+  const [width, setWidth] = useState<number | null>(() => readWidth(widthKey));
+  useEffect(() => { setWidth(readWidth(widthKey)); }, [widthKey]);
+  const asideRef = useRef<HTMLElement | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const onHandleDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const aside = asideRef.current;
+    if (!aside) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = aside.getBoundingClientRect().width;
+    const max = Math.max(MIN_W, Math.floor(window.innerWidth * 0.7));
+    let last = startW;
+    setDragging(true);
+    const move = (ev: PointerEvent) => {
+      last = Math.min(max, Math.max(MIN_W, Math.round(startW + ev.clientX - startX)));
+      setWidth(last);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      setDragging(false);
+      try { localStorage.setItem(widthKey, String(last)); } catch { /* ignore */ }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }, [widthKey]);
+  const resetWidth = useCallback(() => {
+    setWidth(null);
+    try { localStorage.removeItem(widthKey); } catch { /* ignore */ }
+  }, [widthKey]);
 
   return (
     <aside
-      className={`${wide ? 'w-[360px]' : narrow} shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md`}
+      ref={asideRef}
+      className={`${width === null ? (wide ? 'w-[360px]' : narrow) : ''} relative shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md`}
+      style={width === null ? undefined : { width }}
     >
+      {/* The handle on the border: drag to widen, double-click to go back. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Drag to change the width of this column; double-click to reset"
+        title="Drag to widen; double-click to reset"
+        onPointerDown={onHandleDown}
+        onDoubleClick={resetWidth}
+        className={`absolute top-0 right-0 z-20 h-full w-[7px] -mr-[4px] cursor-col-resize select-none ${dragging ? 'bg-[var(--color-primary)]/40' : 'hover:bg-[var(--color-primary)]/30'}`}
+        style={{ touchAction: 'none' }}
+      />
       <div className="flex items-center gap-1 px-2 h-9 border-b border-[var(--color-border)] shrink-0">
         <SidebarTab
           active={tab === 'pages'}

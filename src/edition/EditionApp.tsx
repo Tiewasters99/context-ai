@@ -39,7 +39,7 @@ import { type Week, type Block, type Inline, loadWeeklyIndex, loadWeekly, parseM
 /** The path prefix this page is served under: '' at reader.grapheon.ai, '/reader' on equazia.ai. */
 const BASE = /^\/reader(\/|$)/.test(window.location.pathname) ? '/reader' : '';
 
-type Route = { name: 'home' } | { name: 'new' } | { name: 'how' } | { name: 'weekly'; date: string | null } | { name: 'read'; id: string };
+type Route = { name: 'home' } | { name: 'new' } | { name: 'how' } | { name: 'reset' } | { name: 'weekly'; date: string | null } | { name: 'read'; id: string };
 
 function parseRoute(pathname: string): Route {
   const p = pathname.startsWith(BASE) ? pathname.slice(BASE.length) : pathname;
@@ -47,6 +47,7 @@ function parseRoute(pathname: string): Route {
   if (m) return { name: 'read', id: decodeURIComponent(m[1]) };
   if (/^\/new\/?$/.test(p)) return { name: 'new' };
   if (/^\/how\/?$/.test(p)) return { name: 'how' };
+  if (/^\/reset\/?$/.test(p)) return { name: 'reset' };
   const w = /^\/weekly(?:\/(\d{4}-\d{2}-\d{2}))?\/?$/.exec(p);
   if (w) return { name: 'weekly', date: w[1] ?? null };
   return { name: 'home' };
@@ -66,9 +67,12 @@ function useRoute(): [Route, (to: string) => void] {
   return [route, navigate];
 }
 
-function useSession(): { session: Session | null; ready: boolean } {
+function useSession(): { session: Session | null; ready: boolean; recovery: boolean } {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
+  // True once the reader arrived through a "choose a new password" link:
+  // supabase-js reads the link's token and says PASSWORD_RECOVERY.
+  const [recovery, setRecovery] = useState(false);
   useEffect(() => {
     let live = true;
     void supabase.auth.getSession().then(({ data }) => {
@@ -76,10 +80,14 @@ function useSession(): { session: Session | null; ready: boolean } {
       setSession(data.session);
       setReady(true);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => { if (live) setSession(s); });
+    const { data: sub } = supabase.auth.onAuthStateChange((e, s) => {
+      if (!live) return;
+      setSession(s);
+      if (e === 'PASSWORD_RECOVERY') setRecovery(true);
+    });
     return () => { live = false; sub.subscription.unsubscribe(); };
   }, []);
-  return { session, ready };
+  return { session, ready, recovery };
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +189,7 @@ function SignIn() {
   const wide = useWideCover();
   const [fitRef, coverW] = useCoverFit(!wide);
   const k = coverW ? Math.min(1.15, Math.max(0.6, coverW / 390)) : 1;
-  const [mode, setMode] = useState<'in' | 'new'>('in');
+  const [mode, setMode] = useState<'in' | 'new' | 'forgot'>('in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -194,7 +202,13 @@ function SignIn() {
     setTrouble(null);
     setNote(null);
     const address = email.trim();
-    if (mode === 'in') {
+    if (mode === 'forgot') {
+      // The link lands on /reset, where the reader chooses a new password.
+      // (Supabase Auth must list this origin among its redirect URLs.)
+      const { error } = await supabase.auth.resetPasswordForEmail(address, { redirectTo: `${window.location.origin}${BASE}/reset` });
+      if (error) setTrouble(error.message);
+      else setNote('If that address has an account, an email is on its way. Open the link in it to choose a new password.');
+    } else if (mode === 'in') {
       const { error } = await supabase.auth.signInWithPassword({ email: address, password });
       if (error) setTrouble(error.message);
     } else {
@@ -222,6 +236,7 @@ function SignIn() {
   };
 
   const swap = () => { setMode(mode === 'in' ? 'new' : 'in'); setTrouble(null); setNote(null); };
+  const go = (m: 'in' | 'new' | 'forgot') => { setMode(m); setTrouble(null); setNote(null); };
 
   const line = (
     <p className="text-center leading-snug" style={{ fontFamily: SERIF, color: 'rgba(233,214,160,0.92)', fontSize: wide ? 17 : 15 * k }}>
@@ -232,17 +247,26 @@ function SignIn() {
   const form = (
     <form onSubmit={submit} className="space-y-2.5">
       <input className={goldField} style={goldFieldStyle} type="email" autoComplete="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <input className={goldField} style={goldFieldStyle} type="password" autoComplete={mode === 'in' ? 'current-password' : 'new-password'} placeholder={mode === 'in' ? 'Password' : 'Choose a password'} value={password} onChange={(e) => setPassword(e.target.value)} />
+      {mode !== 'forgot' && <input className={goldField} style={goldFieldStyle} type="password" autoComplete={mode === 'in' ? 'current-password' : 'new-password'} placeholder={mode === 'in' ? 'Password' : 'Choose a password'} value={password} onChange={(e) => setPassword(e.target.value)} />}
       <Trouble text={trouble} />
       {note && <p className="rounded-md border px-3 py-2 text-[13px]" style={{ borderColor: 'rgba(217,189,122,0.5)', color: '#f1e3b8' }}>{note}</p>}
       <div className="flex items-center justify-between gap-3 pt-1">
-        <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} type="submit" disabled={busy || !email || !password}>
-          <BookOpen size={16} /> {busy ? (mode === 'in' ? 'Signing in…' : 'Creating…') : mode === 'in' ? 'Sign in' : 'Create account'}
+        <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} type="submit" disabled={busy || !email || (mode !== 'forgot' && !password)}>
+          <BookOpen size={16} /> {busy ? (mode === 'in' ? 'Signing in…' : mode === 'forgot' ? 'Sending…' : 'Creating…') : mode === 'in' ? 'Sign in' : mode === 'forgot' ? 'Send me a link' : 'Create account'}
         </button>
-        <button type="button" onClick={swap} className="text-[13px] underline underline-offset-2" style={{ color: GOLD }}>
-          {mode === 'in' ? 'Create an account' : 'I have an account'}
-        </button>
+        {mode === 'forgot' ? (
+          <button type="button" onClick={() => go('in')} className="text-[13px] underline underline-offset-2" style={{ color: GOLD }}>Back to sign in</button>
+        ) : (
+          <button type="button" onClick={swap} className="text-[13px] underline underline-offset-2" style={{ color: GOLD }}>
+            {mode === 'in' ? 'Create an account' : 'I have an account'}
+          </button>
+        )}
       </div>
+      {mode === 'in' && (
+        <div className="pt-0.5 text-right">
+          <button type="button" onClick={() => go('forgot')} className="text-[12px] underline underline-offset-2" style={{ color: 'rgba(233,214,160,0.75)' }}>Forgot your password?</button>
+        </div>
+      )}
       {mode === 'new' && (
         <p className="pt-1 text-[12px] leading-relaxed" style={{ color: 'rgba(233,214,160,0.7)' }}>
           By creating an account you accept the{' '}
@@ -411,6 +435,67 @@ function GiltWordmark() {
       <span style={{ fontFamily: SERIF, fontWeight: 600, fontSize: 28, letterSpacing: '0.02em' }}>Grapheon</span>
       <span style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: 18, opacity: 0.85 }}>Reader</span>
     </div>
+  );
+}
+
+/** /reset — where a "forgot your password" link lands: choose a new one.
+ *  With no session (the link expired, or was opened in another browser) the
+ *  page says so and offers the sign-in page, where a fresh link can be asked for. */
+function ResetPassword({ session, navigate }: { session: Session | null; navigate: (to: string) => void }) {
+  const [password, setPassword] = useState('');
+  const [again, setAgain] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [trouble, setTrouble] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password.length < 8) { setTrouble('Choose at least eight characters.'); return; }
+    if (password !== again) { setTrouble('The two passwords differ.'); return; }
+    setBusy(true);
+    setTrouble(null);
+    const { error } = await supabase.auth.updateUser({ password });
+    setBusy(false);
+    if (error) { setTrouble(error.message); return; }
+    setDone(true);
+  };
+
+  return (
+    <ClothPage session={session} navigate={navigate}>
+      <GiltRule className="mt-7" />
+      <div className="mx-auto max-w-md py-10">
+        <h1 style={{ fontFamily: SERIF, fontSize: 32, fontWeight: 600, color: GOLD, lineHeight: 1.1 }}>A new password</h1>
+        {!session ? (
+          <div className="mt-5 space-y-4" style={{ fontFamily: SERIF, fontSize: 17, color: 'rgba(241,227,184,0.92)' }}>
+            <p>This link has expired, or it was opened somewhere other than where it was asked for.</p>
+            <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate('/')}>
+              <BookOpen size={16} /> Back to sign in
+            </button>
+            <p className="text-[14px]" style={{ color: 'rgba(233,214,160,0.7)' }}>There, choose “Forgot your password?” and a fresh link will come.</p>
+          </div>
+        ) : done ? (
+          <div className="mt-5 space-y-4" style={{ fontFamily: SERIF, fontSize: 17, color: 'rgba(241,227,184,0.92)' }}>
+            <p>Your password is changed. You are signed in.</p>
+            <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} onClick={() => navigate('/')}>
+              <BookOpen size={16} /> To the Library
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="mt-5 space-y-2.5">
+            <p className="mb-3" style={{ fontFamily: SERIF, fontSize: 17, color: 'rgba(241,227,184,0.92)' }}>Choose a new password for {session.user.email}.</p>
+            <input className={goldField} style={goldFieldStyle} type="password" autoComplete="new-password" placeholder="New password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <input className={goldField} style={goldFieldStyle} type="password" autoComplete="new-password" placeholder="The same again" value={again} onChange={(e) => setAgain(e.target.value)} />
+            <Trouble text={trouble} />
+            <div className="pt-1">
+              <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} type="submit" disabled={busy || !password || !again}>
+                <BookOpen size={16} /> {busy ? 'Saving…' : 'Save and sign in'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+      <GiltRule />
+    </ClothPage>
   );
 }
 
@@ -1454,7 +1539,14 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
 
 export default function EditionApp() {
   const [route, navigate] = useRoute();
-  const { session, ready } = useSession();
+  const { session, ready, recovery } = useSession();
+
+  // A "choose a new password" link may land anywhere (Supabase falls back to
+  // the site URL when the redirect is not on its list); the recovery event
+  // sends the reader to the form either way.
+  useEffect(() => {
+    if (recovery && route.name !== 'reset') navigate('/reset');
+  }, [recovery, route.name, navigate]);
 
   useEffect(() => {
     document.title = route.name === 'how' ? 'How it works — Grapheon Reader' : route.name === 'weekly' ? 'New Acquisitions — Grapheon Reader' : 'Grapheon Reader';
@@ -1462,6 +1554,7 @@ export default function EditionApp() {
 
   if (!ready) return <Shell><p className="pt-10 text-[14px] opacity-60">…</p></Shell>;
   if (route.name === 'weekly') return <WeeklyPage date={route.date} session={session} navigate={navigate} />;
+  if (route.name === 'reset') return <ResetPassword session={session} navigate={navigate} />;
   if (!session) return <SignIn />;
   if (route.name === 'new') return <NewEdition navigate={navigate} />;
   if (route.name === 'how') return <Spotlight session={session} navigate={navigate} />;
