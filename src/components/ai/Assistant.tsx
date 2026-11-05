@@ -862,7 +862,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             } else if (ev.action === 'open_matter' && inp.matter_id) {
               navigate(`/app/matterspace/${inp.matter_id}`);
               onClose();
-            } else if (ev.action === 'open_conversation' && inp.conversation_id) {
+            } else if (ev.action === 'open_past_chat' && inp.conversation_id) {
               // After this reply settles: reopening swaps the panel's
               // conversation, and the answer pointing at it should be read first.
               const id = inp.conversation_id;

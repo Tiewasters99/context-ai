@@ -30,8 +30,8 @@ check('message text: blocks', messageText([{ type: 'text', text: 'a' }, { type: 
 // ── the menu
 const names = (o) => new Set(o.tools.map((t) => t.name));
 const plain = names(orchestratorMenu({}));
-check('menu: an ordinary turn has both recall tools + open_conversation',
-  RECALL_TOOL_NAMES.every((n) => plain.has(n)) && plain.has('open_conversation'));
+check('menu: an ordinary turn has both recall tools + open_past_chat',
+  RECALL_TOOL_NAMES.every((n) => plain.has(n)) && plain.has('open_past_chat'));
 check('menu: a sealed turn still has recall (scoped to its matter inside)',
   RECALL_TOOL_NAMES.every((n) => names(orchestratorMenu({ sealed: true })).has(n)));
 check('menu: a charter run has no recall',
@@ -93,7 +93,7 @@ if (liveAt > 0) {
   check('live: a matter search reaches its sub-matter', (b.conversations ?? []).some((c) => c.matter === sub));
   if (a.conversations?.[0]) {
     const g = await getConversation(sb, { conversation_id: a.conversations[0].conversation_id }, opts);
-    check('live: get_conversation returns messages in order',
+    check('live: read_past_chat returns messages in order',
       (g.messages ?? []).length > 0 && g.messages.every((m, i, arr) => i === 0 || arr[i - 1].message < m.message),
       `${(g.messages ?? []).length} messages`);
   }
