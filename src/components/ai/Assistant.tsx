@@ -18,6 +18,7 @@ import {
   OPEN_CONVERSATION_EVENT,
   announceConversationsChanged,
   loadConversation,
+  openConversation,
 } from '@/lib/orchestrator-conversations';
 import Prose from '@/components/ai/Prose';
 
@@ -817,7 +818,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             text?: string;
             message?: string;
             action?: string;
-            input?: { document_id?: string; page?: number; matter_id?: string; name?: string; description?: string };
+            input?: { document_id?: string; page?: number; matter_id?: string; conversation_id?: string; name?: string; description?: string };
             sessionId?: string | null;
             tier?: string;
             provider?: string;
@@ -861,6 +862,11 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             } else if (ev.action === 'open_matter' && inp.matter_id) {
               navigate(`/app/matterspace/${inp.matter_id}`);
               onClose();
+            } else if (ev.action === 'open_conversation' && inp.conversation_id) {
+              // After this reply settles: reopening swaps the panel's
+              // conversation, and the answer pointing at it should be read first.
+              const id = inp.conversation_id;
+              setTimeout(() => openConversation(id), 0);
             }
           } else if (ev.type === 'confirm') {
             // Confirm-required write (M2.1): open the gated dialog; the user
