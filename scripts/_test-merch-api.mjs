@@ -33,7 +33,7 @@ process.env.VITE_SUPABASE_URL = 'https://example.supabase.co';
 process.env.VITE_SUPABASE_ANON_KEY = 'anon-key';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
 
-const { default: merch, priceCents, imageUrlIsMine, readPrintifyProduct } = await import('../api/merch.mjs');
+const { default: merch, priceCents, imageUrlIsMine, readPrintifyProduct, chooseVariants, MAX_VARIANTS } = await import('../api/merch.mjs');
 const { default: webhook, addressFromSession } = await import('../api/grapheon-webhook.mjs');
 const { default: release } = await import('../api/merch-release.mjs');
 
@@ -199,7 +199,12 @@ function fakeWorld({ printifyImages = [], failOrder = false, spotlightFiles = []
 
     if (u.host === 'api.printify.com') {
       if (auth !== 'Bearer printify-token') return respond(401, { message: 'bad token' });
-      if (u.pathname === '/v1/uploads/images.json') return respond(200, { id: 'img-1', file_name: 'plate.jpg', width: 3600, height: 2400 });
+      if (u.pathname === '/v1/uploads/images.json') {
+        // Printify's real shape: file_name + url (or file_name + contents). Anything else is 422.
+        const b = JSON.parse(init?.body || '{}');
+        if (!b.file_name || !(b.url || b.contents)) return respond(422, { message: 'Validation failed.', errors: { file_name: ['required'], url: ['required'] } });
+        return respond(200, { id: 'img-1', file_name: b.file_name, width: 3600, height: 2400 });
+      }
       if (u.pathname === '/v1/catalog/blueprints/5/print_providers/99/variants.json') {
         return respond(200, { id: 5, title: 'tee', variants: [{ id: 17390, title: 'Heather Grey / XS', options: { color: 'Heather Grey', size: 'XS' } }, { id: 17393, title: 'Heather Grey / L', options: { color: 'Heather Grey', size: 'L' } }] });
       }
@@ -338,7 +343,7 @@ test('make: a Library plate goes up by file_url, the product is made at the blue
   assert.equal(p.title, 'Through the Russian Revolution — Unisex cotton tee');
   assert.deepEqual(p.variants.map((v) => [v.id, v.cost_cents, v.price_cents, v.color_hex]), [[17390, 1989, 2799, '#a4a4a3'], [17393, 2001, 2899, '#a4a4a3']]);
   const up = w.printify().find((c) => c.path === '/v1/uploads/images.json');
-  assert.deepEqual(up.body, { file_url: MY_IMAGE });
+  assert.deepEqual(up.body, { file_name: decodeURIComponent(MY_IMAGE.split('?')[0].split('/').pop()), url: MY_IMAGE });
   const made = w.printify().find((c) => c.path === '/v1/shops/25109380/products.json' && c.method === 'POST');
   assert.equal(made.body.print_areas[0].placeholders[0].images[0].scale, 0.85);
   assert.equal(made.body.print_areas[0].placeholders[0].position, 'front');
@@ -709,4 +714,23 @@ test('sweep: does nothing unless MERCH_SEND_TO_PRODUCTION=window; with CRON_SECR
   assert.equal(opened.json().released, 1);
   assert.equal(order.status, 'in_production');
   assert.equal(order.error, null);
+});
+
+test('chooseVariants: at most 100 enabled, whole colours, the classic shades first (Printify error 8251)', () => {
+  const sizes = ['S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'];
+  const colours = ['Aqua', 'Berry', 'Black', 'Cardinal', 'Charity Pink', 'Daisy', 'Forest Green', 'Gold', 'Heather Grey', 'Kelly', 'Lilac', 'Maroon', 'Navy', 'Natural', 'Orange', 'Purple', 'Red', 'Royal', 'Sand', 'Teal', 'White'];
+  const catalog = [];
+  let id = 1;
+  for (const c of colours) for (const sz of sizes) catalog.push({ id: id++, title: `${c} / ${sz}`, options: { color: c, size: sz } });
+  assert.equal(catalog.length, 147);
+  const kept = chooseVariants(catalog);
+  assert.ok(kept.length <= MAX_VARIANTS, String(kept.length));
+  const keptColours = [...new Set(kept.map((v) => v.options.color))];
+  // Whole colours: every kept colour has all seven sizes.
+  for (const c of keptColours) assert.equal(kept.filter((v) => v.options.color === c).length, 7, c);
+  // The classics are in; the cap is filled as far as whole colours allow (14 × 7 = 98).
+  for (const c of ['White', 'Black', 'Navy', 'Natural', 'Heather Grey']) assert.ok(keptColours.includes(c), c);
+  assert.equal(kept.length, 98);
+  // A small catalogue is kept entire, in its own order.
+  assert.deepEqual(chooseVariants(catalog.slice(0, 20)), catalog.slice(0, 20));
 });
