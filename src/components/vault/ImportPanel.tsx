@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw, Tag, Wand2, List, LayoutGrid, Image as ImageIcon, Check, FolderPlus } from 'lucide-react';
+import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw, Tag, Wand2, List, LayoutGrid, Image as ImageIcon, Check, CheckSquare, FolderPlus } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
 import { thumbUrl, isThumbable } from '@/lib/vault-thumbs';
 import { describeTextStatus, describeOcrPending } from '../../../lib/ingest-formats.mjs';
@@ -190,7 +190,7 @@ function friendlyIngestError(msg: string): string {
 // shows its file name instead, and a picture the pipeline is still working
 // on says so. A click opens it exactly as the row does; Ctrl/Shift-click or
 // the corner check selects it, and a drag carries the whole selection.
-function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, onDragStart, onContextMenu }: {
+function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, onCheckClick, onSweep, onDragStart, onContextMenu }: {
   file: VaultFile;
   onContextMenu?: (e: React.MouseEvent) => void;
   onOpen?: () => void;
@@ -198,6 +198,10 @@ function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, 
   /** A click with Ctrl/Cmd or Shift held: returns true when it was a selection, not an open. */
   onSelectClick?: (e: React.MouseEvent) => boolean;
   onToggle?: () => void;
+  /** The corner check's click (toggle, or Shift range); falls back to onToggle. */
+  onCheckClick?: (e: React.MouseEvent) => void;
+  /** Press on the corner check and sweep across tiles to select a run. */
+  onSweep?: (e: React.PointerEvent) => void;
   onDragStart?: (e: React.DragEvent) => void;
 }) {
   // The signed thumbnail URL, remembered with the path it was signed for, so a
@@ -235,9 +239,11 @@ function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, 
       {onToggle && (
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); onToggle(); }}
+          onClick={(e) => { if (onCheckClick) onCheckClick(e); else { e.stopPropagation(); onToggle(); } }}
+          onPointerDown={onSweep}
           aria-label={selected ? 'Deselect' : 'Select'}
           aria-pressed={selected}
+          title="Select · Shift-click another for the range · or hold and sweep across the tiles"
           className={`absolute top-1.5 left-1.5 z-10 w-5 h-5 rounded flex items-center justify-center border transition-opacity ${
             selected
               ? 'opacity-100 bg-[#e8b84a] border-[#e8b84a] text-black'
@@ -448,8 +454,11 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
   // Ctrl/Cmd-click adds or removes one, Shift-click takes the range from the
   // last one clicked, dragging a box across empty space catches everything it
   // touches (Ctrl held adds to what is already selected), and the corner
-  // check does it without a keyboard. A plain click still OPENS, as it always
-  // has. Dragging any selected item carries the whole selection.
+  // check does it without a keyboard: click it, Shift-click another for the
+  // range, or press it and sweep down the list (startSweep). Select all takes
+  // the whole listing. A plain click still OPENS, as it always has, and a
+  // click on the background leaves the selection alone. Dragging any
+  // selected item carries the whole selection.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const anchorRef = useRef<string | null>(null);
   const canMove = !!onMoveFiles && !!matterId;
@@ -479,6 +488,16 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       .map((f) => f.id);
   }, [showPictures, pictureGroups, pictureTake, pictures, groups, groupTake, filtered, shown]);
 
+  // Every file the listing holds that can be selected — the whole filtered
+  // list, not the render window, so "Select all" on a 300-row docket takes
+  // all 300 and not the first screenful.
+  const allSelectable = useMemo(
+    () => (showPictures ? pictures : filtered).filter((f) => !!f.matterspace_id).map((f) => f.id),
+    [showPictures, pictures, filtered],
+  );
+  const allSelected = allSelectable.length > 0 && allSelectable.every((id) => selected.has(id));
+  const selectAll = () => { setSelected(new Set(allSelectable)); };
+
   const toggleSelected = (id: string) => {
     anchorRef.current = id;
     setSelected((prev) => {
@@ -504,6 +523,54 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
   };
 
   const byId = useMemo(() => new Map(files.map((f) => [f.id, f])), [files]);
+
+  // Press on a check and sweep down (or up) the list: everything between the
+  // first row and the one under the pointer is selected, and backing up
+  // shrinks the run — Explorer's "click the first, hold, pull to the last"
+  // (Eden, 11-04). Starting on the check, not the row, is what keeps every
+  // row draggable: preventDefault on the press stops the native drag that a
+  // press on the row would start. Mouse only; a finger on the list scrolls.
+  const sweptRef = useRef(false);
+  const startSweep = (e: React.PointerEvent, id: string) => {
+    if (!canMove || e.button !== 0 || e.pointerType !== 'mouse') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const additive = e.ctrlKey || e.metaKey;
+    const base = additive ? new Set(selected) : new Set<string>();
+    const a = drawnOrder.indexOf(id);
+    if (a < 0) return;
+    let last: string | null = null;
+    sweptRef.current = false;
+    const onMove = (ev: PointerEvent) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>('[data-file-id]');
+      const over = el?.dataset.fileId;
+      if (!over || over === last) return;
+      const b = drawnOrder.indexOf(over);
+      if (b < 0) return;
+      last = over;
+      sweptRef.current = true;
+      anchorRef.current = id;
+      const range = drawnOrder.slice(Math.min(a, b), Math.max(a, b) + 1);
+      setSelected(new Set([...base, ...range]));
+    };
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      // The click that follows a sweep ending on the check it began on would
+      // toggle that row off again; checkClick swallows it.
+      if (!sweptRef.current) return;
+      setTimeout(() => { sweptRef.current = false; }, 0);
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  };
+  /** The check itself: a click toggles, Shift-click takes the range from the last one clicked. */
+  const checkClick = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (sweptRef.current) { sweptRef.current = false; return; }
+    if (e.shiftKey && selectClick(e, id)) return;
+    toggleSelected(id);
+  };
 
   // ── Cut / Copy / Paste (Eden, 10-02) ───────────────────────────────────
   // Right-click a file: Cut or Copy (the whole selection, as a drag carries
@@ -589,6 +656,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       const k = e.key.toLowerCase();
       if ((k === 'x' || k === 'c') && selected.size) { e.preventDefault(); putOnClip(k === 'x' ? 'cut' : 'copy', [...selected]); }
       else if (k === 'v' && clip && matterId) { e.preventDefault(); void pasteInto(matterId, matterName ?? 'this folder'); }
+      else if (k === 'a' && canMove && allSelectable.length && areaRef.current?.matches(':hover')) { e.preventDefault(); selectAll(); }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -614,8 +682,10 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
 
   // The box: pressed on empty space inside the list/grid (never on a file,
   // which starts a native drag, or on a button), drawn in the area's own
-  // coordinates, and applied once it is more than a few pixels across so a
-  // plain click on the background just clears the selection.
+  // coordinates, and applied once it is more than a few pixels across. A
+  // plain click on the background does NOTHING to the selection (Eden,
+  // 11-04: a click that missed a check by a hair used to empty the whole
+  // batch); Esc and the Clear button are the ways to empty it.
   const areaRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const onAreaPointerDown = (e: React.PointerEvent) => {
@@ -648,7 +718,6 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
       setBox(null);
-      if (!moved && !additive) setSelected(new Set());
     };
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
@@ -768,9 +837,11 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       {selectable && (
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); toggleSelected(file.id); }}
+          onClick={(e) => checkClick(e, file.id)}
+          onPointerDown={(e) => startSweep(e, file.id)}
           aria-label={isSelected ? 'Deselect' : 'Select'}
           aria-pressed={isSelected}
+          title="Select · Shift-click another for the range · or hold and sweep down the list"
           className={`w-4 h-4 shrink-0 rounded flex items-center justify-center border transition-opacity ${
             isSelected
               ? 'opacity-100 bg-[#e8b84a] border-[#e8b84a] text-black'
@@ -1097,6 +1168,18 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                     <FolderPlus size={12} strokeWidth={1.75} /> New folder
                   </button>
                 )}
+                {/* Select all, there before anything is selected (Eden, 11-04).
+                    Takes the whole listing, not the rendered window. */}
+                {allSelectable.length > 0 && !allSelected && (
+                  <button
+                    type="button"
+                    onClick={selectAll}
+                    title={`Select all ${allSelectable.length.toLocaleString()} documents${search ? ' matching the search' : ''} (Ctrl+A over the list)`}
+                    className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[rgba(255,255,255,0.12)] text-[11px] text-white/80 hover:border-[#e8b84a]/50 hover:text-white transition-colors"
+                  >
+                    <CheckSquare size={12} strokeWidth={1.75} /> Select all
+                  </button>
+                )}
               </div>
             )}
 
@@ -1104,17 +1187,19 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
               <div className="flex items-center gap-3 flex-wrap mb-3 px-3 py-2 rounded-lg border border-[#e8b84a]/40 bg-[rgba(232,184,74,0.08)] text-[11px] text-[#f0dfa8]">
                 <span className="font-semibold">{selected.size.toLocaleString()} selected</span>
                 <span className="text-white/55">Drag any of them onto a folder to move them all · a click still opens · Esc clears</span>
-                <button
-                  type="button"
-                  onClick={() => setSelected(new Set(drawnOrder))}
-                  className="ml-auto text-white/70 hover:text-[#e8b84a]"
-                >
-                  Select all shown
-                </button>
+                {!allSelected && (
+                  <button
+                    type="button"
+                    onClick={selectAll}
+                    className="ml-auto text-white/70 hover:text-[#e8b84a]"
+                  >
+                    Select all {allSelectable.length.toLocaleString()}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setSelected(new Set())}
-                  className="text-white/70 hover:text-[#e8b84a]"
+                  className={`${allSelected ? 'ml-auto ' : ''}text-white/70 hover:text-[#e8b84a]`}
                 >
                   Clear
                 </button>
@@ -1171,6 +1256,8 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                             selected={selected.has(file.id)}
                             onSelectClick={canMove ? (e) => selectClick(e, file.id) : undefined}
                             onToggle={canMove ? () => toggleSelected(file.id) : undefined}
+                            onCheckClick={canMove ? (e) => checkClick(e, file.id) : undefined}
+                            onSweep={canMove ? (e) => startSweep(e, file.id) : undefined}
                             onDragStart={(e) => startDrag(e, file)}
                             onContextMenu={(e) => fileMenu(e, file)}
                           />
