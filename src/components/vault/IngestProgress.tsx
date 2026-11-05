@@ -5,8 +5,8 @@ import type { IngestJobSnapshot } from '@/lib/vault-types';
 // sat at "extracting" for an hour with nothing to say how far it had got).
 // It draws from what the worker already records — the stage on the document
 // row and the page count in the job's progress note (lib/ingest-progress.mjs)
-// — and says, in one line, why the wait exists at all: the pages are read,
-// OCR'd and indexed so the AI can cite them. A PDF needs none of that to be
+// — and says, in three words, what the wait buys: indexed, OCR'd, citable.
+// A PDF needs none of that to be
 // opened, so the line offers "Open now" when the row can do it.
 interface IngestProgressProps {
   /** documents.processing_status. */
