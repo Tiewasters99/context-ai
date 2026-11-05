@@ -18,8 +18,8 @@ const check = (name, ok, detail = '') => {
 
 // ── pure pieces
 check('terms: words + phrase, deduped, lowercased',
-  JSON.stringify(queryTerms('Dr. Bedard "Mount Sinai" bedard x')) === JSON.stringify(['dr', 'bedard', 'mount sinai']),
-  JSON.stringify(queryTerms('Dr. Bedard "Mount Sinai" bedard x')));
+  JSON.stringify(queryTerms('Dr. Smith "General Hospital" smith x')) === JSON.stringify(['dr', 'smith', 'general hospital']),
+  JSON.stringify(queryTerms('Dr. Smith "General Hospital" smith x')));
 check('terms: empty', queryTerms('').length === 0 && queryTerms(undefined).length === 0);
 const long = `${'a '.repeat(400)}the Bates stamp MS-0042 ${'b '.repeat(400)}`;
 const ex = excerptsFor(long, ['bates']);
