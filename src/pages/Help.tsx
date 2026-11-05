@@ -61,7 +61,22 @@ export default function Help() {
           </p>
         )}
 
-        {rooms.map((room) => (
+        {query ? (
+          // A question's answers in the order they match, best first, each
+          // saying which room it belongs to — not regrouped by room, which
+          // would put the best answer wherever its room happens to fall.
+          <section className="mb-10 space-y-6">
+            {shown.map((e) => (
+              <article key={e.id} id={e.id} className="scroll-mt-6">
+                <div className="text-[11px] uppercase tracking-[0.08em] text-[#5a5665] mb-1">{e.room}</div>
+                <h3 className="text-[16px] font-medium text-[#e8e4de] mb-1.5">
+                  <a href={`#${e.id}`} className="hover:text-[#e8b84a] transition-colors">{e.title}</a>
+                </h3>
+                <p className="text-[15px] leading-relaxed text-[#b8b4be]">{e.text}</p>
+              </article>
+            ))}
+          </section>
+        ) : rooms.map((room) => (
           <section key={room} className="mb-10">
             <h2 className="text-[20px] font-semibold text-white mb-4" style={serif}>{room}</h2>
             <div className="space-y-6">
