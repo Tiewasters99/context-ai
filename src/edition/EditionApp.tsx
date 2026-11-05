@@ -894,8 +894,8 @@ const SPOTLIGHT: {
   images: Array<{ file: string; display?: string; caption?: string; merch?: boolean }>;
   video: string | null;
   intro: string[];
-  /** How it works, one step at a time; `image` names a file in `images`. */
-  steps: Array<{ title: string; text: string; image?: string }>;
+  /** How it works, one step at a time; `image` names a file in `images`; `text` may be several paragraphs. */
+  steps: Array<{ title: string; text: string | string[]; image?: string }>;
 } = {
   work: 'Kunstformen der Natur',
   author: 'Ernst Haeckel, 1899–1904',
@@ -903,23 +903,23 @@ const SPOTLIGHT: {
   slug: 'kunstformen-der-natur',
   images: [
     { file: 'tafel-2-thalamophora.png', display: 'tafel-2-thalamophora.jpg', caption: 'Tafel 2. Thalamophora — Kammerlinge: the foraminifera.' },
-    { file: 'orchestrator-answer.png', caption: 'The Orchestrator, asked about Tafel 5.', merch: false },
+    { file: 'orchestrator-answer.png', caption: 'The Librarian, asked about Tafel 5.', merch: false },
     { file: 'tafel-5-calcispongiae.png', display: 'tafel-5-calcispongiae.jpg', caption: 'Tafel 5. Calcispongiae — Kalkschwämme: the calcareous sponges.' },
   ],
   video: null,
   intro: [
-    'Ernst Haeckel drew these plates between 1899 and 1904: a hundred of them, radiolarians and jellyfish, sponges and orchids, each page arranged like a jeweller’s tray. The book has been in and out of print for a century and in copyright for none of it. It is in the Library, cleaned, in two volumes.',
-    'Here is what the Reader does with it.',
+    'Ernst Haeckel drew these plates between 1899 and 1904: a hundred of them, radiolarians and jellyfish, sponges and orchids, each page arranged like a jeweller’s tray. The book has been in and out of print for a century. Haeckel died in 1919, and the plates have been in the public domain since the German term of copyright ran out seventy years later. It is in the Library, cleaned, in two volumes.',
   ],
   steps: [
     { title: 'Open the book', image: 'tafel-2-thalamophora.png',
-      text: 'The scan is cleaned page by page and shown at the size it was printed. Turn to Tafel 2 and the foraminifera stand out of the black ground as they did in 1899.' },
-    { title: 'Ask', image: 'orchestrator-answer.png',
-      text: 'The Orchestrator reads the page you are on. Ask what you are looking at and the answer arrives beside the plate, in the length you asked for: here, a hundred and fifty words on the calcareous sponges of Tafel 5.' },
-    { title: 'Snip it, bench it, take it further', image: 'tafel-5-calcispongiae.png',
-      text: 'Draw a box around a plate, or a detail of one, and it goes to the Workbench. From the bench, one click copies the picture and opens Midjourney, Runway, Flow, Grok or ChatGPT. Paste, and the plate is yours to work on.' },
-    { title: 'Wear it',
-      text: 'Any picture from a public-domain work can go on a tee, a tote or a print. Choose the garment, see it mocked up with the plate in place, pay, and the print shop makes it and ships it to you.' },
+      text: 'Turn to any page. The editors recommend Tafel 2, where the foraminifera stand out boldly as they did in 1899.' },
+    { title: 'Ask a question', image: 'orchestrator-answer.png',
+      text: 'The Librarian can answer general questions about the work, its author, the epoch, the book’s reception, the meaning of a difficult English word or an unknown foreign one. The Librarian can also translate any text into English as you read. And the Librarian reads the page you are on, so you can ask specific questions about that page. You can tune the Librarian to be as lengthy or as concise as you want. In the example here, we asked for a 150-word explanation of what Tafel 5 shows.' },
+    { title: 'Create', image: 'tafel-5-calcispongiae.png',
+      text: [
+        'Draw a box around a plate, or a detail of one, and it goes to the Workbench. From the bench, one click copies the picture and opens Midjourney, Runway, Flow, Grok or ChatGPT. You can then paste the plate into your favourite tool and bring the result back to the book, where you can discreetly insert a marker that opens into a larger view when you click on it.',
+        'You can also create products from the plates: t-shirts, totes and prints. Click the plate you want, choose a tee, a tote or a print, and you have your own product, which you can sell freely, since the works in the Library are in the public domain.',
+      ] },
   ],
 };
 
@@ -1031,7 +1031,7 @@ function Spotlight({ session, navigate }: { session: Session; navigate: (to: str
                       <span style={{ fontFamily: SERIF, fontSize: 34, fontWeight: 600, color: GOLD, lineHeight: 1 }}>{i + 1}</span>
                       <h2 style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 600, color: GOLD, lineHeight: 1.15 }}>{st.title}</h2>
                     </div>
-                    <p className="mt-3" style={prose}>{st.text}</p>
+                    {(Array.isArray(st.text) ? st.text : [st.text]).map((t, j) => <p key={j} className={j === 0 ? 'mt-3' : 'mt-4'} style={prose}>{t}</p>)}
                   </div>
                   {im && <div className={i % 2 === 1 ? 'sm:order-1' : ''}>{figure(im)}</div>}
                 </li>
