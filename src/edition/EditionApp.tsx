@@ -9,6 +9,7 @@ import { readMerchReturn, stripMerchReturn } from '@/lib/merch-sheet';
 import PdfBook, { type PdfSource, type MarksStore, type BenchStore, type BookSelection, type PageSides, type PdfBookHandle } from '@/components/reader/PdfBook';
 import { NotesRail, NOTE_RAIL_W } from '@/components/reader/Marginalia';
 import { annotationIsNote, type Annotation } from '@/lib/document-annotations';
+import { verifiedFactors, confirmFactor, type VerifiedFactor } from '@/lib/second-factor';
 import { renderPageCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import type { MoreItem } from '@/components/reader/reader-chrome';
 import {
@@ -449,6 +450,43 @@ function ResetPassword({ session, navigate }: { session: Session | null; navigat
   const [busy, setBusy] = useState(false);
   const [trouble, setTrouble] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // An account with a second factor may only change its password from a
+  // session that has passed that factor (Supabase: "AAL2 session is required").
+  // The recovery link gives a first-factor session, so the factor is asked
+  // for here, before the new password.
+  const [stepUp, setStepUp] = useState<'checking' | 'none' | 'needed' | 'done'>('checking');
+  const [factor, setFactor] = useState<VerifiedFactor | null>(null);
+  const [code, setCode] = useState('');
+
+  const askForFactor = async () => {
+    const all = await verifiedFactors();
+    const f = all.find((x) => x.factor_type === 'totp') ?? all[0] ?? null;
+    setFactor(f);
+    setStepUp(f ? 'needed' : 'none');
+  };
+  useEffect(() => {
+    if (!session) return;
+    let live = true;
+    void (async () => {
+      const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (!live) return;
+      if (data && data.nextLevel === 'aal2' && data.currentLevel !== 'aal2') await askForFactor();
+      else setStepUp('none');
+    })();
+    return () => { live = false; };
+  }, [session]);
+
+  const confirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!factor) return;
+    setBusy(true);
+    setTrouble(null);
+    const fail = await confirmFactor(factor, code);
+    setBusy(false);
+    if (fail) { setTrouble(fail); return; }
+    setCode('');
+    setStepUp('done');
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -458,7 +496,11 @@ function ResetPassword({ session, navigate }: { session: Session | null; navigat
     setTrouble(null);
     const { error } = await supabase.auth.updateUser({ password });
     setBusy(false);
-    if (error) { setTrouble(error.message); return; }
+    if (error) {
+      if (/aal2/i.test(error.message)) { await askForFactor(); setTrouble('Confirm your second factor first.'); return; }
+      setTrouble(error.message);
+      return;
+    }
     setDone(true);
   };
 
@@ -482,6 +524,25 @@ function ResetPassword({ session, navigate }: { session: Session | null; navigat
               <BookOpen size={16} /> To the Library
             </button>
           </div>
+        ) : stepUp === 'needed' && factor ? (
+          <form onSubmit={confirm} className="mt-5 space-y-2.5">
+            <p className="mb-3" style={{ fontFamily: SERIF, fontSize: 17, color: 'rgba(241,227,184,0.92)' }}>
+              {factor.factor_type === 'webauthn'
+                ? 'Your account has a passkey. Confirm it, then choose the new password.'
+                : 'Your account has an authenticator app. Enter its six-digit code, then choose the new password.'}
+            </p>
+            {factor.factor_type !== 'webauthn' && (
+              <input className={goldField} style={goldFieldStyle} inputMode="numeric" autoComplete="one-time-code" placeholder="Six-digit code" value={code} onChange={(e) => setCode(e.target.value)} />
+            )}
+            <Trouble text={trouble} />
+            <div className="pt-1">
+              <button className={goldPrimary} style={{ background: GOLD, color: CLOTH }} type="submit" disabled={busy || (factor.factor_type !== 'webauthn' && code.replace(/\s+/g, '').length < 6)}>
+                <BookOpen size={16} /> {busy ? 'Checking…' : factor.factor_type === 'webauthn' ? 'Use my passkey' : 'Confirm the code'}
+              </button>
+            </div>
+          </form>
+        ) : stepUp === 'checking' ? (
+          <p className="mt-5" style={{ fontFamily: SERIF, fontSize: 17, color: 'rgba(233,214,160,0.7)' }}>One moment…</p>
         ) : (
           <form onSubmit={submit} className="mt-5 space-y-2.5">
             <p className="mb-3" style={{ fontFamily: SERIF, fontSize: 17, color: 'rgba(241,227,184,0.92)' }}>Choose a new password for {session.user.email}.</p>

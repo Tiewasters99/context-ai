@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Lock, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { verifiedFactors, confirmFactor, type VerifiedFactor } from '@/lib/second-factor';
 
 // Landing page users hit after clicking the password-reset link in their
 // email. Supabase puts a recovery session into the URL fragment on arrival;
@@ -21,6 +22,43 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [hasRecoverySession, setHasRecoverySession] = useState(false);
+  // An account with a second factor may only change its password from a
+  // session that has passed that factor (Supabase: "AAL2 session is required").
+  // The recovery link gives a first-factor session, so the factor is asked
+  // for here, before the new password.
+  const [factor, setFactor] = useState<VerifiedFactor | null>(null);
+  const [stepUp, setStepUp] = useState<'checking' | 'none' | 'needed' | 'done'>('checking');
+  const [code, setCode] = useState('');
+
+  async function askForFactor() {
+    const all = await verifiedFactors();
+    const f = all.find((x) => x.factor_type === 'totp') ?? all[0] ?? null;
+    setFactor(f);
+    setStepUp(f ? 'needed' : 'none');
+  }
+  useEffect(() => {
+    if (!hasRecoverySession) return;
+    let live = true;
+    void (async () => {
+      const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (!live) return;
+      if (data && data.nextLevel === 'aal2' && data.currentLevel !== 'aal2') await askForFactor();
+      else setStepUp('none');
+    })();
+    return () => { live = false; };
+  }, [hasRecoverySession]);
+
+  async function handleConfirm(e: React.FormEvent) {
+    e.preventDefault();
+    if (!factor) return;
+    setError('');
+    setLoading(true);
+    const fail = await confirmFactor(factor, code);
+    setLoading(false);
+    if (fail) { setError(fail); return; }
+    setCode('');
+    setStepUp('done');
+  }
 
   // Confirm the page actually has a recovery session (otherwise the user
   // landed here directly without clicking the email link). onAuthStateChange
@@ -51,6 +89,7 @@ export default function ResetPassword() {
     const { error } = await supabase.auth.updateUser({ password });
     setLoading(false);
     if (error) {
+      if (/aal2/i.test(error.message)) { await askForFactor(); setError('Confirm your second factor first.'); return; }
       setError(error.message);
       return;
     }
@@ -97,6 +136,31 @@ export default function ResetPassword() {
             <CheckCircle2 size={16} />
             Password updated. Redirecting to app…
           </div>
+        ) : hasRecoverySession && stepUp === 'needed' && factor ? (
+          <form onSubmit={handleConfirm} className="space-y-4">
+            <p className="text-sm text-white/70">
+              {factor.factor_type === 'webauthn'
+                ? 'Your account has a passkey. Confirm it, then set the new password.'
+                : 'Your account has an authenticator app. Enter its six-digit code, then set the new password.'}
+            </p>
+            {factor.factor_type !== 'webauthn' && (
+              <input
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="Six-digit code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-lg border border-[rgba(255,255,255,0.06)] bg-[#1c1c26] text-sm text-white placeholder-[#8a8693] focus:outline-none focus:ring-2 focus:ring-[#d4a054] focus:border-transparent"
+              />
+            )}
+            <button
+              type="submit"
+              disabled={loading || (factor.factor_type !== 'webauthn' && code.replace(/\s+/g, '').length < 6)}
+              className="w-full py-2.5 rounded-lg bg-[#d4a054] hover:bg-[#c4903a] text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Checking…' : factor.factor_type === 'webauthn' ? 'Use my passkey' : 'Confirm the code'}
+            </button>
+          </form>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="relative">
