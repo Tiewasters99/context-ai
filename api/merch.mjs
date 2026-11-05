@@ -380,6 +380,40 @@ export default async function handler(req, res, deps = {}) {
 
 /* ───────────────────────── make ───────────────────────── */
 
+/** Printify allows at most 100 enabled variants on a product (error 8251);
+ *  the crew tee's catalogue has more than that (every colour × every size).
+ *  Keep whole colours, so every size of a colour is there or none: the
+ *  classic shades first, then the rest in the catalogue's order, until the
+ *  next colour would go past the cap. A catalogue of 100 or fewer is kept
+ *  entire. */
+export const MAX_VARIANTS = 100;
+const PREFERRED_COLOURS = ['white', 'black', 'navy', 'natural', 'heather', 'grey', 'gray', 'charcoal', 'sand', 'cream', 'red', 'royal', 'forest'];
+export function chooseVariants(catalog, max = MAX_VARIANTS) {
+  if (!Array.isArray(catalog)) return [];
+  if (catalog.length <= max) return catalog;
+  const colourOf = (v) => String(v?.options?.color ?? v?.options?.colour ?? v?.title?.split('/')[0] ?? '').trim();
+  const groups = new Map();
+  for (const v of catalog) {
+    const c = colourOf(v);
+    if (!groups.has(c)) groups.set(c, []);
+    groups.get(c).push(v);
+  }
+  const rank = (c) => {
+    const lc = c.toLowerCase();
+    const i = PREFERRED_COLOURS.findIndex((p) => lc.includes(p));
+    return i === -1 ? PREFERRED_COLOURS.length : i;
+  };
+  const ordered = [...groups.keys()].sort((a, b) => rank(a) - rank(b));
+  const out = [];
+  for (const c of ordered) {
+    const g = groups.get(c);
+    if (out.length + g.length > max) continue;
+    out.push(...g);
+  }
+  // A single colour bigger than the cap (or no colour option at all): the first `max`.
+  return out.length > 0 ? out : catalog.slice(0, max);
+}
+
 async function make(req, res, { bearer, user, body, ctx, doFetch }) {
   const key = String(body.blueprint_key ?? '');
   const imageUrl = String(body.image_url ?? '');
@@ -422,11 +456,14 @@ async function make(req, res, { bearer, user, body, ctx, doFetch }) {
   };
 
   try {
-    const image = await uploadImageToPrintify({ file_url: imageUrl }, ctx);
+    // Printify's upload takes a file name and a url (not file_url: that
+    // shape answers 422 "Validation failed.").
+    const fileName = decodeURIComponent(imageUrl.split('?')[0].split('/').pop() || '') || 'picture.png';
+    const image = await uploadImageToPrintify({ file_name: fileName, url: imageUrl }, ctx);
     if (!image?.id) return fail(502, 'printify_error', 'Printify did not take the picture.');
 
     const catalog = await getBlueprintVariants(blueprint.blueprint_id, blueprint.provider_id, ctx);
-    const variantIds = catalog.map((v) => v.id);
+    const variantIds = chooseVariants(catalog).map((v) => v.id);
     if (variantIds.length === 0) return fail(502, 'printify_error', 'Printify offers no variants of that product.');
 
     // Printify prices on products are cents; the real figure is set once the

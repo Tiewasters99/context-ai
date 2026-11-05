@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search, Shirt, Music, X, StickyNote, Send, Loader2 } from 'lucide-react';
+import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search, Shirt, Music, ZoomIn, X, StickyNote, Send, Loader2 } from 'lucide-react';
 import { ListenPanel, stopListening } from './Listen';
 import { supabase } from '@/lib/supabase';
 import MerchSheet, { type MerchSheetOpen } from '@/components/reader/MerchSheet';
@@ -848,6 +848,14 @@ function Spotlight({ session, navigate }: { session: Session; navigate: (to: str
   const s = SPOTLIGHT;
   const [sheet, setSheet] = useState<MerchSheetOpen | null>(null);
   const merchReady = !!(s.editionId && s.slug);
+  // A picture opened large: the full-size original, fitted to the window.
+  const [large, setLarge] = useState<{ file: string; caption?: string } | null>(null);
+  useEffect(() => {
+    if (!large) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setLarge(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [large]);
 
   // Back from Stripe: ?merch=paid&order=<id> opens the orders view; ?merch=cancel says so.
   useEffect(() => {
@@ -877,13 +885,26 @@ function Spotlight({ session, navigate }: { session: Session; navigate: (to: str
   const picture = (file: string) => s.images.find((im) => im.file === file) ?? null;
   const figure = (im: NonNullable<ReturnType<typeof picture>>) => (
     <figure>
-      <img
-        src={spotlightImageUrl(s.slug!, im.display ?? im.file)}
-        alt={im.caption ?? ''}
-        loading="lazy"
-        className="w-full rounded-sm"
-        style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }}
-      />
+      <div className="relative group">
+        <img
+          src={spotlightImageUrl(s.slug!, im.display ?? im.file)}
+          alt={im.caption ?? ''}
+          loading="lazy"
+          className="w-full rounded-sm cursor-zoom-in"
+          style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }}
+          onClick={() => setLarge({ file: im.file, caption: im.caption })}
+        />
+        <button
+          type="button"
+          onClick={() => setLarge({ file: im.file, caption: im.caption })}
+          className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full opacity-80 hover:opacity-100 focus:opacity-100"
+          style={{ background: 'rgba(16,13,8,0.72)', color: GOLD, boxShadow: '0 0 0 1px rgba(217,189,122,0.5)' }}
+          title="See it large"
+          aria-label="See it large"
+        >
+          <ZoomIn size={15} />
+        </button>
+      </div>
       {im.caption && <figcaption className="mt-2 text-[13px]" style={{ fontFamily: SERIF, fontStyle: 'italic', color: 'rgba(233,214,160,0.75)' }}>{im.caption}</figcaption>}
       {merchReady && im.merch !== false && (
         <button className={`${goldQuiet} mt-2`} style={goldQuietStyle} onClick={() => putOnMerch(im.file)}>
@@ -950,6 +971,33 @@ function Spotlight({ session, navigate }: { session: Session; navigate: (to: str
         </div>
       </div>
       <GiltRule />
+      {large && s.slug && (
+        <div
+          role="dialog"
+          aria-label={large.caption ?? 'The picture, large'}
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center p-4 sm:p-8 cursor-zoom-out"
+          style={{ background: 'rgba(8,6,3,0.92)' }}
+          onClick={() => setLarge(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setLarge(null)}
+            className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full"
+            style={{ background: 'rgba(16,13,8,0.8)', color: GOLD, boxShadow: '0 0 0 1px rgba(217,189,122,0.5)' }}
+            title="Close"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+          <img
+            src={spotlightImageUrl(s.slug, large.file)}
+            alt={large.caption ?? ''}
+            className="max-h-[calc(100vh-96px)] max-w-full rounded-sm object-contain"
+            style={{ boxShadow: '0 0 0 1px rgba(217,189,122,0.35)' }}
+          />
+          {large.caption && <div className="mt-3 text-center text-[14px]" style={{ fontFamily: SERIF, fontStyle: 'italic', color: 'rgba(233,214,160,0.8)' }}>{large.caption}</div>}
+        </div>
+      )}
       {sheet && (
         <MerchSheet
           key={sheet.kind === 'product' ? sheet.itemId : 'orders'}
