@@ -510,6 +510,12 @@ export interface ChatRecord {
   messages: StoredChatMessage[];
   input: string;
   savedAt: number;
+  /**
+   * The server's ai_sessions id for this conversation, when it has one, so a
+   * refresh continues the SAME saved conversation in the sidebar instead of
+   * starting a second one halfway through.
+   */
+  sessionId?: string | null;
 }
 
 /** A panel with no matter is its own scope, and never shares one with a matter. */

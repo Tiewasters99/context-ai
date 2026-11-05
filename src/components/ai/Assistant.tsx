@@ -14,6 +14,11 @@ import {
 import { supabase } from '@/lib/supabase';
 import { getOrchestratorContext } from '@/lib/orchestrator-context';
 import { ASSISTANT_COMMAND_EVENT, type AssistantCommand } from '@/lib/assistant-bus';
+import {
+  OPEN_CONVERSATION_EVENT,
+  announceConversationsChanged,
+  loadConversation,
+} from '@/lib/orchestrator-conversations';
 import Prose from '@/components/ai/Prose';
 
 // The Orchestrator card is never smaller than readable, and docks at a width
@@ -121,7 +126,21 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     input: '',
   });
   const scopeKeyRef = useRef<string>(NO_MATTER_SCOPE);
-  const setMessages = (update: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+  // Every exchange is recorded server-side as an ai_sessions row — matter-
+  // bound or not (128) — and that row is what the sidebar lists. We keep the
+  // id the server hands back so follow-ups land in the same saved
+  // conversation. Keyed by matter AND charter (`${matterId}|${charterId}`):
+  // a scope change, or another agent, starts a fresh one. A ref: nothing
+  // re-renders on it.
+  const sessionRef = useRef<{ key: string; sessionId: string } | null>(null);
+  /** The saved session belonging to a panel scope, if the ref holds one. */
+  const sessionForScope = (scopeId: string | null): string | null => {
+    const cur = sessionRef.current;
+    if (!cur || !scopeId) return null;
+    const matterPart = scopeId === NO_MATTER_SCOPE ? '' : scopeId;
+    return cur.key.startsWith(`${matterPart}|`) ? cur.sessionId : null;
+  };
+  const setMessages =(update: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
     setConv((prev) => {
       const here = prev.scopeId === scopeKeyRef.current;
       const base = here ? prev.messages : [welcomeMessage];
@@ -285,9 +304,18 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         })),
         input: conv.input,
         savedAt: Date.now(),
+        sessionId: sessionForScope(conv.scopeId),
       });
     }
     const kept = readConversation(chatStore, user.id, scopeKey);
+    // A refresh, or walking back into this scope, continues the same saved
+    // conversation rather than opening a second one halfway through it.
+    if (kept?.sessionId) {
+      sessionRef.current = {
+        key: `${scopeKey === NO_MATTER_SCOPE ? '' : scopeKey}|${charterRef.current?.id ?? ''}`,
+        sessionId: kept.sessionId,
+      };
+    }
     setConv({
       scopeId: scopeKey,
       messages: kept ? reviveMessages(kept.messages) : [welcomeMessage],
@@ -320,11 +348,16 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       })),
       input: conv.input,
       savedAt: Date.now(),
+      sessionId: sessionForScope(scopeKey),
     });
   }, [chatStore, user?.id, isOpen, scopeKey, conv, loading, mayKeepConversation]);
 
-  /** Start again in this scope — and take the kept copy with it. */
+  /**
+   * Start again in this scope — and take the kept copy with it. The saved
+   * conversation stays in the sidebar; the next question opens a new one.
+   */
   const clearConversationHere = () => {
+    sessionRef.current = null;
     clearConversation(chatStore, user?.id, scopeKey);
     setConv({ scopeId: scopeKey, messages: [welcomeMessage], input: '' });
   };
@@ -650,14 +683,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     setRunningCharter(c);
   };
 
-  // SecureSpace: matter-bound exchanges are recorded server-side as an
-  // ai_sessions row (the privileged work-product ledger). We keep the id the
-  // server hands back so follow-ups land in the same session; it is keyed by
-  // matter so a scope change starts a fresh session. A ref: nothing re-renders.
-  // Keyed by matter AND charter: a charter run is its own session in the
-  // ledger, so switching agents inside one matter does not silently
-  // continue the previous agent's record.
-  const sessionRef = useRef<{ key: string; sessionId: string } | null>(null);
+  // sessionRef (the saved conversation this panel is continuing) is declared
+  // at the top of the component, beside the conversation it belongs to.
 
   const send = async (text: string) => {
     if (!text || loading) return;
@@ -743,7 +770,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           messages: next.map((m) => ({ role: m.role, content: m.content })),
           matterId: boundMatterId,
           charterId: boundCharterId,
-          sessionId: boundMatterId && sessionRef.current?.key === sessionKey
+          sessionId: sessionRef.current?.key === sessionKey
             ? sessionRef.current.sessionId
             : undefined,
           context: {
@@ -798,9 +825,12 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           };
           try { ev = JSON.parse(payload); } catch { continue; }
           if (ev.type === 'session') {
-            // The server opened (or continued) the recorded session for this matter.
-            if (boundMatterId && ev.sessionId) {
+            // The server opened (or continued) the saved conversation — with a
+            // matter or without one. The sidebar lists it from here on.
+            if (ev.sessionId) {
+              const isNew = sessionRef.current?.sessionId !== ev.sessionId;
               sessionRef.current = { key: sessionKey, sessionId: ev.sessionId };
+              if (isNew) announceConversationsChanged();
             }
             // The pen the tier chose — rendered live in the header and in the
             // strip. The server is the authority: where this disagrees with
@@ -863,6 +893,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       stopRef.current = null;
       setLoading(false);
       setSearching(false);
+      // The answer is written by now: the list re-sorts this conversation to the top.
+      if (sessionRef.current) announceConversationsChanged();
     }
   };
 
@@ -950,6 +982,61 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     };
     window.addEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
     return () => window.removeEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
+  }, []);
+
+  // ── Reopen a saved conversation (the sidebar's Conversations list) ──────
+  //
+  // Loads the transcript from the record, puts the panel in that
+  // conversation's scope — its matter, or no matter — and points the next
+  // turn at the same ai_sessions row, so carrying on adds to it rather than
+  // starting another. The page's own matter is read through a ref because
+  // this listener subscribes once.
+  const pageMatterRef = useRef<string | undefined>(undefined);
+  pageMatterRef.current = routeMatterId ?? getOrchestratorContext().matterId ?? undefined;
+  const [reopenError, setReopenError] = useState<string | null>(null);
+  useEffect(() => {
+    let latest = 0;
+    const onOpen = (e: Event) => {
+      const sessionId = (e as CustomEvent<{ sessionId: string }>).detail?.sessionId;
+      if (!sessionId) return;
+      const ticket = ++latest;
+      // A reply still streaming belongs to the conversation being left; stop
+      // it rather than let it land in the one being opened.
+      stopRef.current?.();
+      setReopenError(null);
+      void loadConversation(sessionId).then(
+        (c) => {
+          if (ticket !== latest) return;   // a later click won
+          if (c.matterId) {
+            commandMatterRef.current = { id: c.matterId, name: c.matterName ?? undefined };
+            setCommandScope({ id: c.matterId, name: c.matterName ?? undefined, sealed: c.tier === 'B' || c.tier === 'C' });
+            setUnscoped(null);
+          } else {
+            commandMatterRef.current = null;
+            setCommandScope(null);
+            // On a matter's page, a matter-less conversation is "ask without
+            // a matter" for that page — the strip says so.
+            setUnscoped(pageMatterRef.current ?? null);
+          }
+          setLivePen(null);
+          // A charter run is titled "<agent> — <question>" by the server.
+          const charterName = c.charterId ? (c.title.split(' — ')[0] || 'Agent') : null;
+          setCharter(c.charterId ? { id: c.charterId, name: charterName as string } : null);
+          sessionRef.current = { key: `${c.matterId ?? ''}|${c.charterId ?? ''}`, sessionId: c.id };
+          setConv({
+            scopeId: c.matterId ?? NO_MATTER_SCOPE,
+            messages: [welcomeMessage, ...c.messages],
+            input: '',
+          });
+        },
+        (err) => {
+          if (ticket !== latest) return;
+          setReopenError(err instanceof Error ? err.message : 'That conversation could not be opened.');
+        },
+      );
+    };
+    window.addEventListener(OPEN_CONVERSATION_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_CONVERSATION_EVENT, onOpen);
   }, []);
 
   return (
@@ -1172,6 +1259,11 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             readable, and the type steps up a size. */}
         <div className={`flex-1 overflow-y-auto py-4 space-y-3 ${wide ? 'px-6 sm:px-10' : 'px-4'}`}>
           <div className={wide ? 'max-w-3xl mx-auto space-y-3' : 'space-y-3'}>
+          {reopenError && (
+            <div className="rounded-md border border-red-400/30 bg-red-400/10 px-3 py-2 text-[12px] text-red-300 leading-snug">
+              {reopenError}
+            </div>
+          )}
           {messages.map((msg) => (
             <div
               key={msg.id}

@@ -49,6 +49,7 @@ import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
 import SecureSpacesSection from '@/components/securespace/SecureSpacesSection';
 import SealMatterModal, { type SealTarget } from '@/components/securespace/SealMatterModal';
 import { SiteSearchMount } from '@/components/search/SiteSearch';
+import ConversationsSection from '@/components/layout/ConversationsSection';
 import { MoveMatterConfirm, MovedToast, MOVED_TOAST_MS } from '@/components/matter/MoveMatterConfirm';
 import { AGENT_TOKENS_KEY, useAgentTokens } from '@/hooks/useAgentTokens';
 import { agentLabel, isLiveAgent, listAgentTokens } from '@/lib/agentTokens';
@@ -797,6 +798,12 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           )}
         </DragOverlay>
         </DndContext>
+
+        {/* Every Orchestrator conversation, newest first — reopened in the
+            panel with a click (Eden, 11-05: "saved in the sidebar, just as
+            with Claude"). Below the matters, as a chat app keeps its
+            recents below its rooms. */}
+        <ConversationsSection collapsed={collapsed} />
       </nav>
 
       {/* Bottom Actions — account plumbing, not rooms. Clears the phone's
