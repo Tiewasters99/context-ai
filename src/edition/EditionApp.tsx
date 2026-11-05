@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search, Shirt, Music } from 'lucide-react';
+import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search, Shirt, Music, X, StickyNote, Send, Loader2 } from 'lucide-react';
 import { ListenPanel, stopListening } from './Listen';
 import { supabase } from '@/lib/supabase';
 import MerchSheet, { type MerchSheetOpen } from '@/components/reader/MerchSheet';
 import { readMerchReturn, stripMerchReturn } from '@/lib/merch-sheet';
-import PdfBook, { type PdfSource, type MarksStore, type BenchStore } from '@/components/reader/PdfBook';
+import PdfBook, { type PdfSource, type MarksStore, type BenchStore, type BookSelection, type PageSides, type PdfBookHandle } from '@/components/reader/PdfBook';
+import { NotesRail, NOTE_RAIL_W } from '@/components/reader/Marginalia';
+import { annotationIsNote, type Annotation } from '@/lib/document-annotations';
 import { renderPageCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import type { MoreItem } from '@/components/reader/reader-chrome';
 import {
@@ -1276,6 +1278,145 @@ function PublishDialog({ edition, pdf, userId, onClose, onPublished }: {
 // The Reader
 // ---------------------------------------------------------------------------
 
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Where a small card over the page goes: beside the selection, kept on screen. */
+function cardPlace(x: number, y: number, w: number, h: number): React.CSSProperties {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+  return { left: Math.max(8, Math.min(vw - w - 8, x - w / 2)), top: Math.max(8, Math.min(vh - h - 8, y + 12)) };
+}
+
+const cardChrome = 'fixed z-[70] rounded-xl border shadow-2xl backdrop-blur-md';
+const cardStyle = { background: 'rgba(12,12,19,0.97)', borderColor: 'rgba(217,189,122,0.35)', color: '#e8e4de' } as const;
+const cardField = 'w-full rounded-md border px-2.5 py-1.5 text-[13px] outline-none placeholder:text-white/30';
+const cardFieldStyle = { background: 'rgba(0,0,0,0.35)', borderColor: 'rgba(255,255,255,0.14)', color: '#f1e3b8' } as const;
+
+/** A margin note, or a Send: the passage, then a few words — saved to the
+ *  edition's marks, or mailed through api/edition-share. */
+function PassageComposer({ kind, sel, editionId, onClose, onSaveNote }: {
+  kind: 'note' | 'send';
+  sel: BookSelection;
+  editionId: string;
+  onClose: () => void;
+  onSaveNote: (text: string) => Promise<boolean>;
+}) {
+  const [text, setText] = useState('');
+  const [to, setTo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [trouble, setTrouble] = useState<string | null>(null);
+  const [sent, setSent] = useState<string | null>(null);
+  const W = 360;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTrouble(null);
+    setBusy(true);
+    try {
+      if (kind === 'note') {
+        if (!text.trim()) { setTrouble('Write the note first.'); return; }
+        const ok = await onSaveNote(text);
+        if (!ok) { setTrouble('The note could not be saved.'); return; }
+        onClose();
+      } else {
+        const address = to.trim();
+        if (!EMAIL_SHAPE.test(address)) { setTrouble('That is not an email address.'); return; }
+        const token = (await supabase.auth.getSession()).data.session?.access_token;
+        if (!token) { setTrouble('Sign in again to send.'); return; }
+        const r = await fetch('/api/edition-share', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+          body: JSON.stringify({ edition_id: editionId, page: sel.page, quote: sel.anchorText, to: address, message: text }),
+        });
+        const data = await r.json().catch(() => null);
+        if (!r.ok) {
+          setTrouble(data?.error === 'email_not_configured' ? 'Sending is not switched on yet.' : data?.error === 'send_failed' ? 'The mail could not be sent. Try again in a moment.' : (data?.detail ? `Could not send: ${data.detail}.` : 'Could not send.'));
+          return;
+        }
+        setSent(address);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const quote = sel.anchorText.length > 240 ? `${sel.anchorText.slice(0, 240)}…` : sel.anchorText;
+  return (
+    <form onSubmit={submit} className={`${cardChrome} p-3`} style={{ ...cardStyle, ...cardPlace(sel.x, sel.y, W, 260), width: W }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="inline-flex items-center gap-1.5 text-[12px] uppercase tracking-[0.14em]" style={{ color: 'rgba(217,189,122,0.85)' }}>
+          {kind === 'note' ? <StickyNote size={13} /> : <Send size={13} />} {kind === 'note' ? 'A margin note' : 'Send this passage'}
+        </div>
+        <button type="button" onClick={onClose} className="h-6 w-6 inline-flex items-center justify-center rounded text-white/50 hover:text-white" title="Close" aria-label="Close"><X size={13} /></button>
+      </div>
+      <blockquote className="mb-2 max-h-24 overflow-auto border-l-2 pl-2.5 leading-snug" style={{ borderColor: 'rgba(217,189,122,0.6)', color: 'rgba(241,227,184,0.85)', fontFamily: SERIF, fontSize: 14, fontStyle: 'italic' }}>
+        {quote}<span className="not-italic opacity-60"> · p. {sel.page}</span>
+      </blockquote>
+      {sent ? (
+        <p className="text-[13px]" style={{ color: '#f1e3b8' }}>Sent to {sent}.</p>
+      ) : (
+        <>
+          {kind === 'send' && (
+            <input className={`${cardField} mb-2`} style={cardFieldStyle} type="email" autoComplete="email" placeholder="To: an email address" value={to} onChange={(e) => setTo(e.target.value)} autoFocus />
+          )}
+          <textarea
+            className={`${cardField} resize-y`}
+            style={{ ...cardFieldStyle, minHeight: 72 }}
+            placeholder={kind === 'note' ? 'Your note' : 'A line to go with it (optional)'}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            autoFocus={kind === 'note'}
+            maxLength={2000}
+          />
+          {trouble && <p className="mt-1.5 text-[12px] text-red-300">{trouble}</p>}
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <button type="button" onClick={onClose} className="h-8 px-3 rounded-md text-[12px] text-white/70 hover:text-white hover:bg-white/5">Cancel</button>
+            <button type="submit" disabled={busy || (kind === 'note' ? !text.trim() : !to.trim())} className="h-8 px-3 inline-flex items-center gap-1.5 rounded-md text-[12px] font-medium disabled:opacity-40" style={{ background: GOLD, color: CLOTH }}>
+              {busy ? <Loader2 size={13} className="animate-spin" /> : kind === 'note' ? <StickyNote size={13} /> : <Send size={13} />}
+              {busy ? (kind === 'note' ? 'Saving…' : 'Sending…') : kind === 'note' ? 'Save the note' : 'Send'}
+            </button>
+          </div>
+        </>
+      )}
+    </form>
+  );
+}
+
+/** A margin note opened from the rail: the passage, the note, a way to remove it. */
+function NoteCard({ note, x, y, onClose, onDelete }: { note: Annotation; x: number; y: number; onClose: () => void; onDelete: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const W = 320;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className={`${cardChrome} p-3`} style={{ ...cardStyle, ...cardPlace(x + W / 2 + 8, y - 12, W, 200), width: W }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="inline-flex items-center gap-1.5 text-[12px] uppercase tracking-[0.14em]" style={{ color: 'rgba(217,189,122,0.85)' }}><StickyNote size={13} /> Your note · p. {note.page}</div>
+        <button type="button" onClick={onClose} className="h-6 w-6 inline-flex items-center justify-center rounded text-white/50 hover:text-white" title="Close" aria-label="Close"><X size={13} /></button>
+      </div>
+      {note.anchor_text && (
+        <blockquote className="mb-2 max-h-20 overflow-auto border-l-2 pl-2.5 leading-snug" style={{ borderColor: 'rgba(217,189,122,0.6)', color: 'rgba(241,227,184,0.75)', fontFamily: SERIF, fontSize: 14, fontStyle: 'italic' }}>
+          {note.anchor_text.length > 200 ? `${note.anchor_text.slice(0, 200)}…` : note.anchor_text}
+        </blockquote>
+      )}
+      <p className="whitespace-pre-wrap text-[13px] leading-relaxed" style={{ color: '#f1e3b8' }}>{note.note}</p>
+      <div className="mt-3 flex justify-end">
+        <button type="button" disabled={busy} onClick={async () => { setBusy(true); try { await onDelete(); } finally { setBusy(false); } }} className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md text-[12px] text-white/60 hover:text-red-300 hover:bg-white/5 disabled:opacity-40">
+          <Trash2 size={12} /> Remove
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Read({ id, session, navigate }: { id: string; session: Session; navigate: (to: string) => void }) {
   const [edition, setEdition] = useState<Edition | null | undefined>(undefined);
   const [trouble, setTrouble] = useState<string | null>(null);
@@ -1286,6 +1427,10 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
   // The cover around the page (the edition's jacket, signed) and the music panel.
   const [surroundUrl, setSurroundUrl] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
+  // A margin note or a Send, composed over the passage; an existing note opened from the rail.
+  const bookRef = useRef<PdfBookHandle | null>(null);
+  const [composer, setComposer] = useState<{ kind: 'note' | 'send'; sel: BookSelection } | null>(null);
+  const [openNote, setOpenNote] = useState<{ note: Annotation; x: number; y: number } | null>(null);
   useEffect(() => {
     let live = true;
     setSurroundUrl(null);
@@ -1317,6 +1462,20 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
 
   const source = useMemo<PdfSource | null>(() => (edition ? editionSource(edition, reloadKey, { canEdit: mine }) : null), [edition, reloadKey, mine]);
   const marks = useMemo<MarksStore | null>(() => (edition ? editionMarks(edition) : null), [edition]);
+  // The notes rail beside each page: a tick per margin note; a click opens it.
+  const pageSides = useMemo<PageSides>(() => ({
+    width: NOTE_RAIL_W,
+    render: (p, all) => ({
+      after: (
+        <NotesRail
+          notes={all.filter((a) => a.page === p && annotationIsNote(a))}
+          currentUserId={session.user.id}
+          isMobile={false}
+          onOpen={(note, anchor) => setOpenNote({ note, x: anchor.x, y: anchor.y })}
+        />
+      ),
+    }),
+  }), [session.user.id]);
   const bench = useMemo<BenchStore | null>(() => (edition && mine ? editionBench(edition, true) : null), [edition, mine]);
 
   useEffect(() => {
@@ -1344,10 +1503,14 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
   return (
     <div className="fixed inset-0 overflow-hidden">
       <PdfBook
+        ref={bookRef}
         source={source}
         marks={marks}
         bench={bench}
         merch={mine}
+        pageSides={pageSides}
+        onNote={(sel) => setComposer({ kind: 'note', sel })}
+        onSend={(sel) => setComposer({ kind: 'send', sel })}
         currentUserId={session.user.id}
         meta={{ title: edition.title, pageCount: null }}
         pageMemoryKey={`edition:${edition.id}`}
@@ -1386,6 +1549,31 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
         onError={(e) => setTrouble(e instanceof Error ? e.message : 'The book could not be opened.')}
       />
       {listening && <ListenPanel onClose={() => setListening(false)} />}
+      {composer && marks && (
+        <PassageComposer
+          kind={composer.kind}
+          sel={composer.sel}
+          editionId={edition.id}
+          onClose={() => setComposer(null)}
+          onSaveNote={async (text) => {
+            const made = await marks.create({ page: composer.sel.page, color: 'gold', rects: composer.sel.rects, anchorText: composer.sel.anchorText, note: text });
+            if (made) await bookRef.current?.reloadMarks();
+            return !!made;
+          }}
+        />
+      )}
+      {openNote && marks && (
+        <NoteCard
+          note={openNote.note}
+          x={openNote.x}
+          y={openNote.y}
+          onClose={() => setOpenNote(null)}
+          onDelete={async () => {
+            const ok = await marks.remove(openNote.note.id);
+            if (ok) { setOpenNote(null); await bookRef.current?.reloadMarks(); }
+          }}
+        />
+      )}
       {publishing && (
         <PublishDialog
           edition={edition}
