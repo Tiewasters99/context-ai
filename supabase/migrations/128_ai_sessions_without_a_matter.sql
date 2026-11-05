@@ -1,6 +1,6 @@
 -- 128 — An Orchestrator conversation with no matter is recorded too.
 --
--- Eden, 2026-11-05: three Orchestrator turns on the Fleming matter were asked
+-- Eden, 2026-11-05: three Orchestrator turns on a client matter were asked
 -- from a panel that was not bound to a matter. The server recorded nothing,
 -- because ai_sessions could only be opened inside a matter, and the
 -- conversation died with the browser tab. "Every conversation needs to be
