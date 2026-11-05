@@ -13,6 +13,7 @@ import {
   Hammer,
   Undo2,
   Scan,
+  Columns2,
   Maximize,
   Minimize,
   MoreHorizontal,
@@ -69,6 +70,8 @@ type Match = { page: number; index: number };
 
 // Vertical gap between page slots in the continuous stack.
 const PAGE_GAP = 16;
+/** The gutter between facing pages when two show side by side. */
+const SPREAD_GAP = 12;
 
 /** The file, and what is laid on its pages. */
 export type PdfSource = {
@@ -301,6 +304,12 @@ export default function PdfBook({
   // pages line up with the PDF's pages for citation/citechecking. Default
   // on. The stack scrolls continuously in either mode.
   const [fitPage, setFitPage] = useState(true);
+  // Two pages side by side, as a book lies open: page 1 alone on the right,
+  // then 2|3, 4|5 … Kept on this device; never on a phone or in a pane,
+  // where there is no room for two. (Eden, 2026-11-03.)
+  const [spread, setSpread] = useState<boolean>(() => { try { return localStorage.getItem('reader-spread') === 'on'; } catch { return false; } });
+  const toggleSpread = useCallback(() => setSpread((v) => { const next = !v; try { localStorage.setItem('reader-spread', next ? 'on' : 'off'); } catch { /* ignore */ } return next; }), []);
+  const twoUp = spread && !isMobile && !paneChrome;
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Bumped whenever the content pane resizes, to re-fit the page.
   const [containerTick, setContainerTick] = useState(0);
@@ -515,26 +524,43 @@ export default function PdfBook({
     // The margin rails flank each page in-flow; subtract them so the page
     // never overflows horizontally. A pane draws none.
     const rails = paneChrome ? 0 : 2 * sideWidth;
-    const byWidth = (pane.clientWidth - PAD * 2 - rails) / d.w;
+    // Two pages side by side share the width (each with its own rails).
+    const across = twoUp ? 2 : 1;
+    const byWidth = (pane.clientWidth - PAD * 2 - rails * across - (across - 1) * SPREAD_GAP) / (d.w * across);
     const fit = paneChrome ? byWidth : Math.min(byWidth, (pane.clientHeight - PAD * 2) / d.h);
     return Math.max(0.1, Math.min(fit, 6));
     // containerTick re-measures the pane on resize / sidebar / fullscreen;
     // loadState re-measures once the pane exists.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fitPage, zoom, pageDims, sideWidth, containerTick, loadState, paneChrome]);
+  }, [fitPage, zoom, pageDims, sideWidth, containerTick, loadState, paneChrome, twoUp]);
+
+  // The rows of the stack: one page each, or — open like a book — page 1
+  // alone on the right and facing pairs after it.
+  const rows = useMemo<number[][] | null>(() => {
+    if (!pageDims) return null;
+    const n = pageDims.length;
+    if (!twoUp) return Array.from({ length: n }, (_, i) => [i + 1]);
+    const out: number[][] = [[1]];
+    for (let p = 2; p <= n; p += 2) out.push(p + 1 <= n ? [p, p + 1] : [p]);
+    return out;
+  }, [pageDims, twoUp]);
 
   // Top offset of every slot inside the scroll content — the map between
   // scrollTop and page numbers, used by jumps and by scroll derivation.
   const slotTops = useMemo(() => {
-    if (!pageDims) return null;
-    const tops: number[] = [];
+    if (!pageDims || !rows) return null;
+    const tops: number[] = new Array(pageDims.length);
     let y = 24; // the stack container's top padding (py-6)
-    for (const d of pageDims) {
-      tops.push(y);
-      y += d.h * renderedScale + PAGE_GAP;
+    for (const row of rows) {
+      let rowH = 0;
+      for (const p of row) {
+        tops[p - 1] = y;
+        rowH = Math.max(rowH, pageDims[p - 1].h * renderedScale);
+      }
+      y += rowH + PAGE_GAP;
     }
     return tops;
-  }, [pageDims, renderedScale]);
+  }, [pageDims, rows, renderedScale]);
   const slotTopsRef = useRef<number[] | null>(null);
   useEffect(() => { slotTopsRef.current = slotTops; }, [slotTops]);
   // The host's goto page, held until the reader scrolls by hand: the dims
@@ -1941,6 +1967,18 @@ export default function PdfBook({
           >
             <Scan size={15} />
           </button>
+          {!paneChrome && (
+          <button
+            onClick={toggleSpread}
+            className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
+              spread ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+            }`}
+            title={spread ? 'Two pages side by side — switch to one' : 'Two pages side by side, like an open book'}
+            aria-pressed={spread}
+          >
+            <Columns2 size={15} />
+          </button>
+          )}
           <button
             onClick={toggleFullscreen}
             className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
@@ -1973,6 +2011,7 @@ export default function PdfBook({
             <PhoneMore
               items={[
                 { icon: <Scan size={14} />, label: fitPage ? '✓ Fit the whole page' : 'Fit the whole page', run: () => setFitPage((v) => !v) },
+                ...(!isMobile && !paneChrome ? [{ icon: <Columns2 size={14} />, label: spread ? '✓ Two pages, side by side' : 'Two pages, side by side', run: toggleSpread }] : []),
                 ...(backdrop ? [{ icon: surround ? <ImageOff size={14} /> : <ImageIcon size={14} />, label: surround ? '✓ Cover around the page' : 'Cover around the page', run: toggleSurround }] : []),
                 { icon: isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />, label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullscreen },
                 ...(moreItems ?? []),
@@ -2057,9 +2096,15 @@ export default function PdfBook({
               <LoadingCard title={meta?.title ?? null} progress={loadProgress} pageCount={meta?.pageCount ?? null} />
             )}
             {notice}
-            {loadState === 'ready' && pageDims && (
+            {loadState === 'ready' && pageDims && rows && (
               <div ref={stackRef} className="flex flex-col items-center">
-                {pageDims.map((d, i) => (
+                {rows.map((row, ri) => (
+                <div key={ri} className="flex flex-row items-start" style={{ gap: twoUp ? SPREAD_GAP : 0 }}>
+                {/* The first page of an open book stands alone on the right. */}
+                {twoUp && ri === 0 && row.length === 1 && (
+                  <div aria-hidden style={{ width: pageDims[0].w * renderedScale + 2 * sideWidth, marginBottom: PAGE_GAP }} />
+                )}
+                {row.map((pn) => { const d = pageDims[pn - 1]; const i = pn - 1; return (
                   <PageSlot
                     key={i + 1}
                     p={i + 1}
@@ -2084,6 +2129,8 @@ export default function PdfBook({
                     setHitLayerEl={setHitLayerEl}
                     onRemove={removeAnnotationCb}
                   />
+                ); })}
+                </div>
                 ))}
               </div>
             )}
