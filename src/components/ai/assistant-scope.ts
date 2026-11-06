@@ -117,30 +117,111 @@ export interface Starter {
   select?: [number, number];
 }
 
-// A blank the user fills: the panel puts the sentence in the input and selects
-// the placeholder rather than sending a question about the word "term".
-const TERM_PREFIX = 'Find where the word “';
-const TERM_SLOT = 'term';
-const TERM_SUFFIX = '” appears and quote the passages with page numbers.';
-
 /**
- * Three openings for a sealed matter. Generic to any litigation matter, and
- * written for word search: each one either needs no search at all, or hands
- * the search a literal string. No claim about what the model is good at.
+ * A sentence with one blank. The panel puts the whole sentence in the box and
+ * selects the bracketed placeholder, so the first keystroke replaces it. The
+ * button shows "…" where the blank is.
  */
-export const SEALED_STARTERS: Starter[] = [
+function blank(before: string, placeholder: string, after: string): Starter {
+  const slot = `[${placeholder}]`;
+  return {
+    label: `${before}…${after}`,
+    text: `${before}${slot}${after}`,
+    select: [before.length, before.length + slot.length],
+  };
+}
+
+function plain(text: string): Starter {
+  return { label: text, text };
+}
+
+export type StarterHeading = 'Research' | 'Draft' | 'Review';
+
+export interface StarterGroup {
+  heading: StarterHeading;
+  starters: Starter[];
+}
+
+/*
+ * The openings, grouped by the three things a lawyer comes to do (Eden,
+ * 2026-11-06: the old single list was "much too basic" for a room answered by
+ * Opus 4.6). Each is a real piece of work, phrased the way a partner would
+ * hand it to an associate: the output, its shape, and the cite discipline.
+ *
+ * Three sets, one shape:
+ *  - SEALED: the matter's own record, and search by WORDS — a sealed matter
+ *    has no embeddings (SEALED_SEARCH_NOTE), so the research blank asks for
+ *    the document's own words, never "passages about".
+ *  - MATTER: an open matter; the same work, and search may go by meaning.
+ *  - GENERAL: no matter in scope; nothing refers to "this matter".
+ * No sentence claims anything about the model's talents.
+ */
+export const SEALED_STARTER_GROUPS: StarterGroup[] = [
   {
-    label: 'List the documents in this matter and what each one is.',
-    text: 'List the documents in this matter and what each one is.',
+    heading: 'Research',
+    starters: [
+      plain('Build a chronology of this matter from its documents: date, event, and the page it comes from.'),
+      blank('Find every passage that uses the words “', 'exact words', '” and explain what each one shows, with page cites.'),
+    ],
   },
   {
-    label: `${TERM_PREFIX}…${TERM_SUFFIX}`,
-    text: `${TERM_PREFIX}${TERM_SLOT}${TERM_SUFFIX}`,
-    select: [TERM_PREFIX.length, TERM_PREFIX.length + TERM_SLOT.length],
+    heading: 'Draft',
+    starters: [
+      plain('Draft a statement of facts from the record in this matter, with a page cite for every sentence.'),
+      blank('Draft a letter to opposing counsel on ', 'issue', ', grounded in the documents in this matter.'),
+    ],
   },
   {
-    label: 'Summarize the most recent order in this matter, with page cites.',
-    text: 'Summarize the most recent order in this matter, with page cites.',
+    heading: 'Review',
+    starters: [
+      plain('Read the most recent order in this matter and list every deadline and obligation it sets, with page cites.'),
+      blank('Review ', 'document title', ' against the rest of the record and flag every inconsistency, with page cites.'),
+    ],
+  },
+];
+
+export const MATTER_STARTER_GROUPS: StarterGroup[] = [
+  {
+    heading: 'Research',
+    starters: [
+      plain('Build a chronology of this matter from its documents: date, event, and the page it comes from.'),
+      blank('Find the passages in this matter that bear on ', 'issue', ' and explain what each one shows, with page cites.'),
+    ],
+  },
+  {
+    heading: 'Draft',
+    starters: [
+      plain('Draft a statement of facts from the record in this matter, with a page cite for every sentence.'),
+      blank('Draft a letter to opposing counsel on ', 'issue', ', grounded in the documents in this matter.'),
+    ],
+  },
+  {
+    heading: 'Review',
+    starters: [
+      plain('Read the most recent order in this matter and list every deadline and obligation it sets, with page cites.'),
+      blank('Review ', 'document title', ' against the rest of the record and flag every inconsistency, with page cites.'),
+    ],
+  },
+];
+
+export const GENERAL_STARTER_GROUPS: StarterGroup[] = [
+  {
+    heading: 'Research',
+    starters: [
+      blank('Set out the legal standard for ', 'motion or issue', ': the elements, who bears the burden, and what courts look for.'),
+    ],
+  },
+  {
+    heading: 'Draft',
+    starters: [
+      blank('Outline a brief on ', 'issue', ': the argument headings, the authority each point needs, and the facts that carry it.'),
+    ],
+  },
+  {
+    heading: 'Review',
+    starters: [
+      blank('Review this draft for structure, unsupported claims and loose wording: ', 'paste the text', ''),
+    ],
   },
 ];
 
@@ -213,7 +294,8 @@ export interface ScopeDescription {
   pauseNote: string;
   /** Empty unless the scope is sealed. */
   searchNote: string;
-  starters: Starter[];
+  /** Research / Draft / Review openings for this scope. */
+  starterGroups: StarterGroup[];
 }
 
 /**
@@ -287,7 +369,9 @@ export function describeScope(facts: ScopeFacts): ScopeDescription {
       ? (facts.pausedSentence?.trim() || 'AI is paused on this matter. Nothing is being sent to any model.')
       : '',
     searchNote: sealed ? SEALED_SEARCH_NOTE : '',
-    starters: sealed ? SEALED_STARTERS : [],
+    starterGroups: sealed
+      ? SEALED_STARTER_GROUPS
+      : facts.name?.trim() ? MATTER_STARTER_GROUPS : GENERAL_STARTER_GROUPS,
   };
 }
 

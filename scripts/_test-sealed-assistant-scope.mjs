@@ -31,7 +31,9 @@ import {
   openPenSentence,
   unscopedStripText,
   SEALED_SEARCH_NOTE,
-  SEALED_STARTERS,
+  SEALED_STARTER_GROUPS,
+  MATTER_STARTER_GROUPS,
+  GENERAL_STARTER_GROUPS,
   SEALED_PEN_DEFAULT_LABEL,
   askAssistantCommand,
   askAssistantLabel,
@@ -100,7 +102,7 @@ test('a route-bound sealed matter gets the whole strip before any message', () =
     'Sealed room — Protegera · no training · zero data retention');
   assert.equal(d.penNote, sealedPenSentence());
   assert.equal(d.searchNote, SEALED_SEARCH_NOTE);
-  assert.equal(d.starters.length, 3);
+  assert.equal(d.starterGroups, SEALED_STARTER_GROUPS);
   // Nothing here needed a reply to arrive.
   assert.equal(d.corrected, false);
 });
@@ -127,7 +129,7 @@ test('an unsealed matter is unchanged: name, the Tier-A pen, no seal', () => {
   assert.equal(`${d.lead}${d.name}${d.tail}`, 'In Anlauf');
   assert.equal(d.penNote, openPenSentence());
   assert.equal(d.penChip, 'Opus 5.5');
-  assert.deepEqual(d.starters, []);
+  assert.notEqual(d.starterGroups, SEALED_STARTER_GROUPS);
   assert.equal(d.searchNote, '');
 });
 
@@ -270,36 +272,53 @@ test('the tier hint alone, with no read yet, still opens the sealed strip', () =
   assert.equal(d.penNote, sealedPenSentence());
 });
 
-// ── 5. Starters written for word search ───────────────────────────────────
+// ── 5. Starters: Research / Draft / Review ────────────────────────────────
 
-test('three starters, and each one works against a word index', () => {
-  assert.equal(SEALED_STARTERS.length, 3);
-  const labels = SEALED_STARTERS.map((s) => s.label);
-  assert.ok(labels.some((l) => /List the documents in this matter/.test(l)));
-  assert.ok(labels.some((l) => /appears and quote the passages with page numbers/.test(l)));
-  assert.ok(labels.some((l) => /Summarize the most recent order in this matter, with page cites/.test(l)));
-  // No claim about the model's talents anywhere in them.
-  for (const s of SEALED_STARTERS) {
-    assert.ok(!/\b(best|great|excellent|powerful|smart)\b/i.test(s.text), s.text);
+const ALL_SETS = { SEALED_STARTER_GROUPS, MATTER_STARTER_GROUPS, GENERAL_STARTER_GROUPS };
+
+test('every set is grouped Research, Draft, Review, in that order', () => {
+  for (const [name, groups] of Object.entries(ALL_SETS)) {
+    assert.deepEqual(groups.map((g) => g.heading), ['Research', 'Draft', 'Review'], name);
+    for (const g of groups) assert.ok(g.starters.length > 0, `${name} ${g.heading}`);
   }
 });
 
-test('the fill-in starter selects exactly the placeholder, nothing else', () => {
-  const s = SEALED_STARTERS.find((x) => x.select);
-  assert.ok(s, 'one starter leaves the term for the user to type');
-  const [from, to] = s.select;
-  assert.equal(s.text.slice(from, to), 'term');
-  assert.ok(s.text.startsWith('Find where the word'));
-  assert.ok(s.text.endsWith('appears and quote the passages with page numbers.'));
-  // The label advertises the blank rather than a literal word.
-  assert.ok(s.label.includes('…'));
-  assert.ok(!s.label.includes('term'));
+test('a blank selects exactly its bracketed placeholder; the label shows …', () => {
+  for (const [name, groups] of Object.entries(ALL_SETS)) {
+    for (const s of groups.flatMap((g) => g.starters)) {
+      if (!s.select) { assert.equal(s.label, s.text, name); continue; }
+      const [from, to] = s.select;
+      assert.match(s.text.slice(from, to), /^\[[^\]]+\]$/, `${name}: ${s.text}`);
+      assert.ok(s.label.includes('…'), s.label);
+      assert.ok(!s.label.includes('['), s.label);
+    }
+  }
 });
 
-test('the other two starters send as they read', () => {
-  for (const s of SEALED_STARTERS.filter((x) => !x.select)) {
-    assert.equal(s.label, s.text);
+test('no starter claims anything about the model', () => {
+  for (const groups of Object.values(ALL_SETS)) {
+    for (const s of groups.flatMap((g) => g.starters)) {
+      assert.ok(!/\b(best|great|excellent|powerful|smart)\b/i.test(s.text), s.text);
+    }
   }
+});
+
+test('sealed research searches by the document’s own words, not by meaning', () => {
+  const research = SEALED_STARTER_GROUPS.find((g) => g.heading === 'Research').starters;
+  const blankOne = research.find((s) => s.select);
+  assert.ok(blankOne.text.includes('uses the words'));
+  for (const s of SEALED_STARTER_GROUPS.flatMap((g) => g.starters)) {
+    assert.ok(!/\b(bear on|about|relating to)\b/i.test(s.text), s.text);
+  }
+});
+
+test('with no matter in scope, nothing refers to "this matter"', () => {
+  for (const s of GENERAL_STARTER_GROUPS.flatMap((g) => g.starters)) {
+    assert.ok(!/this matter/i.test(s.text), s.text);
+  }
+  assert.equal(describeScope({ tier: 'A' }).starterGroups, GENERAL_STARTER_GROUPS);
+  assert.equal(describeScope({ tier: 'A', name: 'Bushell' }).starterGroups, MATTER_STARTER_GROUPS);
+  assert.equal(describeScope({ tier: 'B', name: 'Swab Vera' }).starterGroups, SEALED_STARTER_GROUPS);
 });
 
 // ── 6. The door on the matter page ────────────────────────────────────────

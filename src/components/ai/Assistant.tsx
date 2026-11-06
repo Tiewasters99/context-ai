@@ -73,16 +73,8 @@ const welcomeMessage: ChatMessage = {
   timestamp: new Date(),
 };
 
-// The opening screen's suggestions. A fresh panel is a blank box, and a
-// blank box teaches nothing; these show the kind of thing worth asking.
-// They are plain questions the Orchestrator answers by explaining — none
-// of them starts an action.
-const SUGGESTIONS = [
-  'Can you help me prepare a summary judgment brief?',
-  'How can you help me prepare for trial?',
-  'Does Equazia.ai connect to a public-facing site?',
-  'What kind of tools do you have to help me?',
-];
+// The opening screen's suggestions live in assistant-scope.ts, grouped as
+// Research / Draft / Review (sealed, open-matter and no-matter sets).
 
 // With a book open in the reader, the panel is a companion at the same
 // table: the suggestions are about the work, and the page in front of the
@@ -1364,35 +1356,46 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
                 </p>
               )}
               {renderComposer(true)}
-              {/* The suggestions, in small type under the box. Each one is put
-                  IN the box, never sent on its own. Inside a seal the openings
-                  are the three WORD-search starters; elsewhere the usual set. */}
-              <div className="mt-3 flex flex-col items-start gap-1">
-                <span className="text-[11px] uppercase tracking-wide text-white/35">Try</span>
-                {describe.starters.length > 0
-                  ? describe.starters.map((s) => (
-                    <button
-                      key={s.label}
-                      type="button"
-                      onClick={() => runStarter(s)}
-                      title={s.select ? 'Puts this in the box with the word selected — type over it' : 'Puts this in the box — edit it or press Send'}
-                      className="text-left text-[12.5px] leading-snug text-[#9fcbbb] hover:text-[#d6f0e6] hover:underline transition-colors"
-                    >
-                      {s.label}
-                    </button>
-                  ))
-                  : (reading ? READING_SUGGESTIONS : SUGGESTIONS).map((s) => (
+              {/* The suggestions, in small type under the box, grouped by the
+                  work: Research, Draft, Review. Each one is put IN the box,
+                  never sent on its own; a blank arrives selected. With a book
+                  open in the reader, the companion questions instead. */}
+              {reading && !describe.sealed ? (
+                <div className="mt-3 flex flex-col items-start gap-1">
+                  {READING_SUGGESTIONS.map((s) => (
                     <button
                       key={s}
                       type="button"
                       onClick={() => stage(s)}
                       title="Puts this in the box — edit it or press Send"
-                      className="text-left text-[12.5px] leading-snug text-[#d9c79c] hover:text-white hover:underline transition-colors"
+                      className="text-left text-[12px] leading-snug text-[#d9c79c] hover:text-white hover:underline transition-colors"
                     >
                       {s}
                     </button>
                   ))}
-              </div>
+                </div>
+              ) : (
+                <div className={`mt-4 grid gap-x-5 gap-y-3 ${wide ? 'sm:grid-cols-3' : ''}`}>
+                  {describe.starterGroups.map((g) => (
+                    <div key={g.heading} className="flex flex-col items-start gap-1">
+                      <span className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-white/45">{g.heading}</span>
+                      {g.starters.map((s) => (
+                        <button
+                          key={s.label}
+                          type="button"
+                          onClick={() => runStarter(s)}
+                          title={s.select ? 'Puts this in the box with the blank selected — type over it' : 'Puts this in the box — edit it or press Send'}
+                          className={`text-left text-[12px] leading-snug transition-colors hover:underline ${
+                            describe.sealed ? 'text-[#9fcbbb] hover:text-[#d6f0e6]' : 'text-[#d9c79c] hover:text-white'
+                          }`}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {searching && (
