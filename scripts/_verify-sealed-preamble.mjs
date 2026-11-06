@@ -269,8 +269,13 @@ console.log('\n3. The Assistant loop — one preamble on a sealed turn, none on 
     check(typeof plain.system === 'string' && plain.system.startsWith(orchestrator),
       'Tier A: the system prompt is exactly the Orchestrator, byte for byte, in front', plain.system?.slice(0, 80));
     const behind = String(plain.system).slice(orchestrator.length);
-    check(behind === '' || behind.startsWith('\n\nREADING PAGES DIRECTLY:'),
-      'Tier A: nothing follows the Orchestrator but the read_pages paragraph', behind.slice(0, 80));
+    // The menu's own paragraphs, and nothing else: recall (lib/recall-conversations.mjs)
+    // and read_pages. Each is a whole paragraph the loop appends for a tool on the menu.
+    const MENU_PARAGRAPHS = [/^\n\nEARLIER CONVERSATIONS:[^\n]*/, /^\n\nREADING PAGES DIRECTLY:[^\n]*/];
+    let rest = behind;
+    for (const re of MENU_PARAGRAPHS) rest = rest.replace(re, '');
+    check(rest === '',
+      'Tier A: nothing follows the Orchestrator but the menu paragraphs (recall, read_pages)', rest.slice(0, 80));
   }
 
   const escalated = await run({ tier: 'B', escalate: true });

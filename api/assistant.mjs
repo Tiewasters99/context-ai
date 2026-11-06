@@ -156,6 +156,9 @@ export default async function handler(req, res) {
       emit,
       sessionId,
       charterId,
+      // Recall narrows to the caller's own conversations by this id; RLS
+      // has already decided what the token may read, so it is a filter only.
+      userId: bearerSub(userToken),
     });
     emit({ type: 'done', ...result });
     // Reconcile the estimate against what the turn really cost. The pens'
@@ -245,4 +248,13 @@ function sanitizeContext(c) {
       : undefined,
   };
   return Object.values(out).some((v) => v !== undefined) ? out : undefined;
+}
+
+/** The `sub` of the bearer. Unverified here — PostgREST verifies the token on
+ * every read; this only narrows recall to the caller's own rows. */
+function bearerSub(token) {
+  try {
+    const sub = JSON.parse(Buffer.from(String(token).split('.')[1] || '', 'base64url').toString('utf8'))?.sub;
+    return typeof sub === 'string' && sub ? sub : null;
+  } catch { return null; }
 }
