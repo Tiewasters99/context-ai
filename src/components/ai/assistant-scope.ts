@@ -69,8 +69,11 @@ export const ASSISTANT_THE = 'the Orchestrator';
  */
 export const SEALED_PEN_DEFAULT_LABEL = 'Opus 4.6';
 
-export function sealedPenSentence(label: string = SEALED_PEN_DEFAULT_LABEL): string {
-  return `Answers come from the sealed model — ${label} in the firm's own AWS account. Zero data retention. Nothing reaches an outside provider.`;
+// The panel names no model, sealed or open (Eden, 2026-11-06): the model
+// behind either door may change, or sit behind a router. What the panel
+// promises is the door's property: where the answer is made and what is kept.
+export function sealedPenSentence(): string {
+  return 'Answers are made inside the firm’s own AWS account. Zero data retention. Nothing reaches an outside provider.';
 }
 
 /** Tier A, the unsealed default (PENS.anthropic, lib/assistant-core.mjs). One
@@ -79,8 +82,8 @@ export function sealedPenSentence(label: string = SEALED_PEN_DEFAULT_LABEL): str
 export const OPEN_PEN_DEFAULT_LABEL = 'Claude Opus 5.5';
 export const OPEN_PEN_DEFAULT_CHIP = 'Opus 5.5';
 
-export function openPenSentence(label: string = OPEN_PEN_DEFAULT_LABEL): string {
-  return `Answers come from ${label}. This matter is not sealed. Counts toward your plan's AI usage.`;
+export function openPenSentence(): string {
+  return 'This matter is not sealed. Counts toward your plan’s AI usage.';
 }
 
 /**
@@ -144,86 +147,51 @@ export interface StarterGroup {
 
 /*
  * The openings, grouped by the three things a lawyer comes to do (Eden,
- * 2026-11-06: the old single list was "much too basic" for a room answered by
- * Opus 4.6). Each is a real piece of work, phrased the way a partner would
- * hand it to an associate: the output, its shape, and the cite discipline.
+ * 2026-11-06): Research — ask questions, build a chronology, find passages;
+ * Draft — briefs, motions, letters; Review — due diligence, compare
+ * documents, analyse pleadings. The labels are short; what lands in the box
+ * is a working instruction with the blank selected.
  *
- * Three sets, one shape:
- *  - SEALED: the matter's own record, and search by WORDS — a sealed matter
- *    has no embeddings (SEALED_SEARCH_NOTE), so the research blank asks for
- *    the document's own words, never "passages about".
- *  - MATTER: an open matter; the same work, and search may go by meaning.
+ * Three sets, one shape. Only "Find passages" and "Build a chronology" differ:
+ *  - SEALED: search goes by WORDS (no embeddings in a seal; SEALED_SEARCH_NOTE).
+ *  - MATTER: an open matter; search may go by meaning.
  *  - GENERAL: no matter in scope; nothing refers to "this matter".
- * No sentence claims anything about the model's talents.
+ * No sentence claims anything about the model.
  */
-export const SEALED_STARTER_GROUPS: StarterGroup[] = [
-  {
-    heading: 'Research',
-    starters: [
-      plain('Build a chronology of this matter from its documents: date, event, and the page it comes from.'),
-      blank('Find every passage that uses the words “', 'exact words', '” and explain what each one shows, with page cites.'),
-    ],
-  },
-  {
-    heading: 'Draft',
-    starters: [
-      plain('Draft a statement of facts from the record in this matter, with a page cite for every sentence.'),
-      blank('Draft a letter to opposing counsel on ', 'issue', ', grounded in the documents in this matter.'),
-    ],
-  },
-  {
-    heading: 'Review',
-    starters: [
-      plain('Read the most recent order in this matter and list every deadline and obligation it sets, with page cites.'),
-      blank('Review ', 'document title', ' against the rest of the record and flag every inconsistency, with page cites.'),
-    ],
-  },
-];
+function labelled(label: string, starter: Starter): Starter {
+  return { ...starter, label };
+}
 
-export const MATTER_STARTER_GROUPS: StarterGroup[] = [
-  {
-    heading: 'Research',
-    starters: [
-      plain('Build a chronology of this matter from its documents: date, event, and the page it comes from.'),
-      blank('Find the passages in this matter that bear on ', 'issue', ' and explain what each one shows, with page cites.'),
-    ],
-  },
-  {
-    heading: 'Draft',
-    starters: [
-      plain('Draft a statement of facts from the record in this matter, with a page cite for every sentence.'),
-      blank('Draft a letter to opposing counsel on ', 'issue', ', grounded in the documents in this matter.'),
-    ],
-  },
-  {
-    heading: 'Review',
-    starters: [
-      plain('Read the most recent order in this matter and list every deadline and obligation it sets, with page cites.'),
-      blank('Review ', 'document title', ' against the rest of the record and flag every inconsistency, with page cites.'),
-    ],
-  },
-];
+const ASK = labelled('Ask questions', blank('Legal research question: ', 'your question', ''));
+const DRAFT = labelled('Prepare briefs, motions, letters', blank('Draft a ', 'brief, motion or letter', ' on '));
+const DILIGENCE = labelled('Conduct due diligence', blank('Conduct due diligence on ', 'subject', ': what to check, what the documents show, and what is missing.'));
+const COMPARE = labelled('Compare documents', blank('Compare ', 'first document', ' with the other document I name, and set out every material difference.'));
+const PLEADINGS = labelled('Analyse pleadings', blank('Analyse ', 'pleading', ': the claims, their elements, the defenses, and the weak points.'));
 
-export const GENERAL_STARTER_GROUPS: StarterGroup[] = [
-  {
-    heading: 'Research',
-    starters: [
-      blank('Set out the legal standard for ', 'motion or issue', ': the elements, who bears the burden, and what courts look for.'),
-    ],
-  },
-  {
-    heading: 'Draft',
-    starters: [
-      blank('Outline a brief on ', 'issue', ': the argument headings, the authority each point needs, and the facts that carry it.'),
-    ],
-  },
-  {
-    heading: 'Review',
-    starters: [
-      blank('Review this draft for structure, unsupported claims and loose wording: ', 'paste the text', ''),
-    ],
-  },
-];
+function groups(chronology: Starter, passages: Starter): StarterGroup[] {
+  return [
+    { heading: 'Research', starters: [ASK, chronology, passages] },
+    { heading: 'Draft', starters: [DRAFT] },
+    { heading: 'Review', starters: [DILIGENCE, COMPARE, PLEADINGS] },
+  ];
+}
+
+const CHRONOLOGY = labelled('Build a chronology', plain('Build a chronology of this matter from its documents: date, event, and the page it comes from.'));
+
+export const SEALED_STARTER_GROUPS: StarterGroup[] = groups(
+  CHRONOLOGY,
+  labelled('Find passages', blank('Find every passage that uses the words “', 'exact words', '”, with page cites.')),
+);
+
+export const MATTER_STARTER_GROUPS: StarterGroup[] = groups(
+  CHRONOLOGY,
+  labelled('Find passages', blank('Find the passages in this matter that bear on ', 'issue', ', with page cites.')),
+);
+
+export const GENERAL_STARTER_GROUPS: StarterGroup[] = groups(
+  labelled('Build a chronology', blank('Build a chronology from the documents in ', 'matter', ': date, event, and the page it comes from.')),
+  labelled('Find passages', blank('Find the passages in ', 'matter', ' that bear on the issue I describe, with page cites.')),
+);
 
 // ─── The pen's name ───────────────────────────────────────────────────────
 
@@ -312,46 +280,37 @@ export function describeScope(facts: ScopeFacts): ScopeDescription {
   const sealed = liveSealed ?? predictedSealed;
   const unknown = !live && (facts.tier === null || facts.tier === undefined);
 
+  // The panel names no model (see sealedPenSentence); it says what the door
+  // promises. penChip stays in the shape, always empty, for older callers.
   let penNote = '';
-  let penChip = '';
+  const penChip = '';
   if (live) {
-    const label = penLabel(live.model ?? '');
-    penChip = label;
     if (liveSealed) {
       // Only the Bedrock pen carries the seal's claim. If the server ever
-      // answers a sealed matter from somewhere else, say which somewhere —
-      // do not lend it the sentence about our own AWS account.
+      // answers a sealed matter from somewhere else, say so — do not lend it
+      // the sentence about our own AWS account.
       penNote = live.provider === 'aws-bedrock'
-        ? sealedPenSentence(label)
-        : `Answered by ${label} (${live.provider ?? 'an unnamed provider'}).`;
+        ? sealedPenSentence()
+        : `Answered outside the sealed account (${live.provider ?? 'an unnamed provider'}).`;
     } else {
-      penNote = openPenSentence(label);
+      penNote = openPenSentence();
     }
   } else if (facts.tier === 'B') {
     penNote = sealedPenSentence();
-    penChip = SEALED_PEN_DEFAULT_LABEL;
   } else if (facts.tier === 'C') {
     penNote = SILO_SENTENCE;
-    penChip = '';
   } else if (facts.tier === 'A') {
     penNote = openPenSentence();
-    penChip = OPEN_PEN_DEFAULT_CHIP;
   }
 
-  // Did the first reply contradict what the strip promised? Both the seal and
-  // the model's name count: a sealed matter answered by another pen, or the
-  // same tier answered by a different model, are each worth a visible line.
+  // Did the first reply contradict what the strip promised about the SEAL?
+  // (Which model answered is no longer shown, so it is no longer news.)
   //
   // A PREDICTION IS A PREREQUISITE. Where the tier could not be read the strip
   // said only the matter's name, so a sealed first reply is news, not a
   // correction — calling it one would invent a claim the panel never made.
   const predicted = facts.tier === 'A' || facts.tier === 'B' || facts.tier === 'C';
-  const predictedChip = facts.tier === 'B'
-    ? SEALED_PEN_DEFAULT_LABEL
-    : facts.tier === 'A' ? OPEN_PEN_DEFAULT_CHIP : '';
-  const corrected = Boolean(
-    live && predicted && (liveSealed !== predictedSealed || predictedChip !== penChip),
-  );
+  const corrected = Boolean(live && predicted && liveSealed !== predictedSealed);
   const named = Boolean(live) && !predicted;
 
   return {

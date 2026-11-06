@@ -81,15 +81,18 @@ test('the Tier-A ids map to the names the product already uses', () => {
   assert.equal(penLabel('anthropic.claude-opus-5'), 'Opus 5');
 });
 
-test('the strip and the header agree with penLabel about the sealed pen', () => {
-  const d = describeScope({ name: 'Teman', tier: 'B' });
-  assert.equal(d.penChip, SEALED_PEN_DEFAULT_LABEL);
-  assert.equal(SEALED_PEN_DEFAULT_LABEL, penLabel(SEALED_MODEL));
-  assert.ok(d.penNote.includes('Opus 4.6'));
-  assert.ok(!d.penNote.includes('K3'));
-  // Never a Claude 5 model: AWS still gates that generation for this account
-  // (audit 2026-09-19, external blockers; re-probed 2026-10-21).
-  assert.ok(!/opus 5|sonnet 5|fable/i.test(d.penNote));
+test('the panel names no model, sealed or open (Eden, 2026-11-06)', () => {
+  const MODEL = /opus|sonnet|haiku|fable|kimi|claude|gpt|gemini/i;
+  for (const facts of [
+    { name: 'Teman', tier: 'B' },
+    { name: 'Teman', tier: 'A' },
+    { name: 'Teman', tier: 'B', livePen: { tier: 'B', provider: 'aws-bedrock', model: SEALED_MODEL } },
+    { name: 'Teman', tier: 'A', livePen: { tier: 'A', provider: 'anthropic', model: TIER_A_MODEL } },
+  ]) {
+    const d = describeScope(facts);
+    assert.equal(d.penChip, '', 'no model in the header');
+    assert.ok(!MODEL.test(d.penNote), d.penNote);
+  }
 });
 
 // ── 2. The scope strip, before a single message ───────────────────────────
@@ -128,7 +131,7 @@ test('an unsealed matter is unchanged: name, the Tier-A pen, no seal', () => {
   assert.equal(d.sealed, false);
   assert.equal(`${d.lead}${d.name}${d.tail}`, 'In Anlauf');
   assert.equal(d.penNote, openPenSentence());
-  assert.equal(d.penChip, 'Opus 5.5');
+  assert.equal(d.penChip, '');
   assert.notEqual(d.starterGroups, SEALED_STARTER_GROUPS);
   assert.equal(d.searchNote, '');
 });
@@ -190,8 +193,8 @@ test('the strip corrects itself when the server names another pen', () => {
   });
   assert.equal(d.corrected, true);
   assert.equal(d.sealed, false, 'the server’s answer wins outright');
-  assert.equal(d.penNote, openPenSentence('Opus 5.5'));
-  assert.equal(d.penChip, 'Opus 5.5');
+  assert.equal(d.penNote, openPenSentence());
+  assert.equal(d.penChip, '');
 });
 
 test('the strip corrects itself the other way too — unsealed page, sealed answer', () => {
@@ -240,16 +243,17 @@ test('where a prediction WAS made, the reply is a correction and not merely news
   assert.equal(d.corrected, true);
 });
 
-test('a different sealed model on Bedrock is named, and is a correction', () => {
-  // BEDROCK_MODEL can select another pen; the strip must not keep saying K2.5.
+test('a different sealed model on Bedrock is not news: the seal held', () => {
+  // BEDROCK_MODEL (or a router) may pick another model; the panel names none,
+  // so only a change of SEAL is a correction.
   const d = describeScope({
     name: 'Protegera',
     tier: 'B',
     livePen: { tier: 'B', provider: 'aws-bedrock', model: 'anthropic.claude-opus-5' },
   });
-  assert.equal(d.penChip, 'Opus 5');
-  assert.equal(d.penNote, sealedPenSentence('Opus 5'));
-  assert.equal(d.corrected, true);
+  assert.equal(d.penChip, '');
+  assert.equal(d.penNote, sealedPenSentence());
+  assert.equal(d.corrected, false);
 });
 
 test('a sealed tier served from somewhere that is NOT Bedrock gets no seal claim', () => {
@@ -261,7 +265,7 @@ test('a sealed tier served from somewhere that is NOT Bedrock gets no seal claim
   assert.equal(d.sealed, true, 'the tier is still sealed');
   assert.ok(!/AWS account/.test(d.penNote), 'must not lend the AWS claim to another host');
   assert.ok(!/Zero data retention/.test(d.penNote));
-  assert.match(d.penNote, /Answered by kimi-k3 \(fireworks\)/);
+  assert.match(d.penNote, /Answered outside the sealed account \(fireworks\)/);
 });
 
 test('the tier hint alone, with no read yet, still opens the sealed strip', () => {
@@ -276,6 +280,16 @@ test('the tier hint alone, with no read yet, still opens the sealed strip', () =
 
 const ALL_SETS = { SEALED_STARTER_GROUPS, MATTER_STARTER_GROUPS, GENERAL_STARTER_GROUPS };
 
+test('the labels are the ones Eden set (2026-11-06)', () => {
+  for (const groups of Object.values(ALL_SETS)) {
+    assert.deepEqual(groups.map((g) => [g.heading, g.starters.map((s) => s.label)]), [
+      ['Research', ['Ask questions', 'Build a chronology', 'Find passages']],
+      ['Draft', ['Prepare briefs, motions, letters']],
+      ['Review', ['Conduct due diligence', 'Compare documents', 'Analyse pleadings']],
+    ]);
+  }
+});
+
 test('every set is grouped Research, Draft, Review, in that order', () => {
   for (const [name, groups] of Object.entries(ALL_SETS)) {
     assert.deepEqual(groups.map((g) => g.heading), ['Research', 'Draft', 'Review'], name);
@@ -283,14 +297,14 @@ test('every set is grouped Research, Draft, Review, in that order', () => {
   }
 });
 
-test('a blank selects exactly its bracketed placeholder; the label shows …', () => {
+test('labels are short; a blank selects exactly its bracketed placeholder', () => {
   for (const [name, groups] of Object.entries(ALL_SETS)) {
     for (const s of groups.flatMap((g) => g.starters)) {
-      if (!s.select) { assert.equal(s.label, s.text, name); continue; }
+      assert.ok(s.label.length <= 40, `short label: ${s.label}`);
+      assert.ok(!s.label.includes('['), s.label);
+      if (!s.select) continue;
       const [from, to] = s.select;
       assert.match(s.text.slice(from, to), /^\[[^\]]+\]$/, `${name}: ${s.text}`);
-      assert.ok(s.label.includes('…'), s.label);
-      assert.ok(!s.label.includes('['), s.label);
     }
   }
 });
@@ -305,8 +319,8 @@ test('no starter claims anything about the model', () => {
 
 test('sealed research searches by the document’s own words, not by meaning', () => {
   const research = SEALED_STARTER_GROUPS.find((g) => g.heading === 'Research').starters;
-  const blankOne = research.find((s) => s.select);
-  assert.ok(blankOne.text.includes('uses the words'));
+  const find = research.find((s) => s.label === 'Find passages');
+  assert.ok(find.text.includes('uses the words'));
   for (const s of SEALED_STARTER_GROUPS.flatMap((g) => g.starters)) {
     assert.ok(!/\b(bear on|about|relating to)\b/i.test(s.text), s.text);
   }
