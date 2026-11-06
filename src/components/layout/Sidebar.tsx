@@ -48,6 +48,8 @@ import ShareModal from '@/components/serverspace/ShareModal';
 import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
 import SecureSpacesSection from '@/components/securespace/SecureSpacesSection';
 import SealMatterModal, { type SealTarget } from '@/components/securespace/SealMatterModal';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
+import { verifiedFactors } from '@/lib/second-factor';
 import { SiteSearchMount } from '@/components/search/SiteSearch';
 import ConversationsSection from '@/components/layout/ConversationsSection';
 import { MoveMatterConfirm, MovedToast, MOVED_TOAST_MS } from '@/components/matter/MoveMatterConfirm';
@@ -131,6 +133,13 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
   // the button used to do nothing at all — the one onboarding step in the
   // product is "create a serverspace", so say that instead of nothing.
   const [secureChatNotice, setSecureChatNotice] = useState<string | null>(null);
+  // My SecureSpace is sealed, so a session that has not confirmed its second
+  // factor cannot see it (migration 094). Not finding it, ensureMySecureSpace
+  // then tries to create one, and the database refuses with "new row violates
+  // row-level security policy" (Eden, 2026-11-06). That refusal means "confirm
+  // it's you", not "broken": the factor prompt is drawn here and, once
+  // confirmed, SecureChat opens on its own.
+  const [secureChatStepUp, setSecureChatStepUp] = useState<'stepup' | 'enrol' | null>(null);
 
   const { data: serverspaces = [] } = useServerspaces();
   const refreshServerspaces = useServerspacesRefresh();
@@ -429,6 +438,37 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
   const isActive = (path: string) => location.pathname === path;
 
   const sidebarWidth = isMobile ? 'w-[82vw] max-w-[20rem]' : collapsed ? 'w-16' : 'w-64';
+
+  const openSecureChat = () => {
+    // Find-or-create the born-sealed personal room, then hand the
+    // Assistant a promptless command: MainLayout opens the panel,
+    // Assistant scopes to the room, and no model call is spent
+    // until the user actually says something.
+    void (async () => {
+      if (serverspaces.length === 0) {
+        setSecureChatNotice(
+          'SecureChat lives inside a serverspace, and you don’t have one yet.',
+        );
+        return;
+      }
+      setSecureChatNotice(null);
+      try {
+        const room = await ensureMySecureSpace(serverspaces[0].id);
+        await refreshServerspaces();
+        runInAssistant({ matterId: room.id, matterName: room.name, sealed: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('SecureChat:', message);
+        const sealedAway = /row-level security|42501/i.test(message)
+          || (err as { code?: string } | null)?.code === '42501';
+        if (sealedAway) {
+          setSecureChatStepUp((await verifiedFactors()).length > 0 ? 'stepup' : 'enrol');
+          return;
+        }
+        setSecureChatNotice(`SecureChat could not open: ${message}`);
+      }
+    })();
+  };
 
   return (
     <aside
@@ -744,31 +784,23 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           // dead ends on a brand-new account both lead to the one step that
           // fixes them.
           onCreateServerspace={() => setShowNewServerspace(true)}
-          onOpenSecureChat={() => {
-            // Find-or-create the born-sealed personal room, then hand the
-            // Assistant a promptless command: MainLayout opens the panel,
-            // Assistant scopes to the room, and no model call is spent
-            // until the user actually says something.
-            void (async () => {
-              if (serverspaces.length === 0) {
-                setSecureChatNotice(
-                  'SecureChat lives inside a serverspace, and you don’t have one yet.',
-                );
-                return;
-              }
-              setSecureChatNotice(null);
-              try {
-                const room = await ensureMySecureSpace(serverspaces[0].id);
-                await refreshServerspaces();
-                runInAssistant({ matterId: room.id, matterName: room.name, sealed: true });
-              } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                console.error('SecureChat:', message);
-                setSecureChatNotice(`SecureChat could not open: ${message}`);
-              }
-            })();
-          }}
+          onOpenSecureChat={openSecureChat}
         />
+        {secureChatStepUp && !collapsed && (
+          <div className="mx-2 mt-1.5">
+            <StepUpPrompt
+              mode={secureChatStepUp}
+              heading={secureChatStepUp === 'enrol'
+                ? 'SecureChat is sealed. Add a second factor to open it.'
+                : 'SecureChat is sealed. Confirm it’s you to open it.'}
+              onConfirmed={() => {
+                setSecureChatStepUp(null);
+                void refreshServerspaces();
+                openSecureChat();
+              }}
+            />
+          </div>
+        )}
         {secureChatNotice && !collapsed && (
           <div
             className="mx-2 mt-1.5 rounded-md border px-2.5 py-2 text-[11px] leading-snug text-white/65"

@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { User, Session, AuthError } from '@supabase/supabase-js'
+import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { notifyFactorStatusChanged } from '@/hooks/useFactorStatus'
 import { asPlan, type Plan } from '@/lib/plan'
 import {
   browserLocalStore,
@@ -35,6 +37,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [plan, setPlan] = useState<Plan | null>(null)
   const [planLoading, setPlanLoading] = useState(true)
+
+  const queryClient = useQueryClient()
+
+  // The matter tree (useServerspaces) is cached under one key for the whole
+  // tab, and what it may contain depends on the session: who is signed in,
+  // and whether a second factor has been confirmed (migration 094 hides
+  // sealed matters at aal1). A tree read under one session must not outlive
+  // it. (Eden, 2026-11-06: the full tree showed only after a page refresh.)
+  // Any change of who or of assurance level drops the cached tree, so every
+  // sidebar, dashboard and picker reads it again under the session in force.
+  // The factor banner ("Sealed matters are hidden until you confirm it's
+  // you") is re-read on the same events: it was read once per user id, so a
+  // fresh sign-in by the same person after a step-up kept the old "nothing
+  // waiting" answer and the banner never came back while every sealed matter
+  // had gone dark (Eden, 2026-11-06, sessions 17:32 aal2 → 17:35 aal1).
+  //
+  // SIGNED_IN also fires when the tab regains focus (supabase-js v2); that is
+  // one tree read per refocus, the same as react-query's own refetchOnWindowFocus.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        queryClient.removeQueries({ queryKey: ['serverspaces'] })
+      } else if (event === 'SIGNED_IN' || event === 'MFA_CHALLENGE_VERIFIED' || event === 'USER_UPDATED') {
+        void queryClient.invalidateQueries({ queryKey: ['serverspaces'] })
+        notifyFactorStatusChanged()
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [queryClient])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
