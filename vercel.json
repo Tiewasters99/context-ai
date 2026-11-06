@@ -112,7 +112,8 @@
     { "source": "/reader", "has": [{ "type": "host", "value": "www.equazia.ai" }], "destination": "https://reader.grapheon.ai/library", "permanent": false },
     { "source": "/reader/:path*", "has": [{ "type": "host", "value": "www.equazia.ai" }], "destination": "https://reader.grapheon.ai/:path*", "permanent": false },
     { "source": "/reader", "has": [{ "type": "host", "value": "equazia.ai" }], "destination": "https://reader.grapheon.ai/library", "permanent": false },
-    { "source": "/reader/:path*", "has": [{ "type": "host", "value": "equazia.ai" }], "destination": "https://reader.grapheon.ai/:path*", "permanent": false }
+    { "source": "/reader/:path*", "has": [{ "type": "host", "value": "equazia.ai" }], "destination": "https://reader.grapheon.ai/:path*", "permanent": false },
+    { "source": "/:path((?!api/).*)", "has": [{ "type": "host", "value": "equazia.ai" }], "destination": "https://www.equazia.ai/:path", "permanent": false }
   ],
   "rewrites": [
     {

@@ -143,6 +143,18 @@ export default async function handler(req, res) {
     try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch { /* client disconnected */ }
   };
 
+  // Heartbeat. A sealed turn HOLDS its answer text until the record has it
+  // (W1, lib/assistant-core.mjs), so while a long answer is being written the
+  // wire is silent; so is a slow first token on a very long prompt. The panel
+  // stops after 90 s of silence (Assistant.tsx INACTIVITY_MS) and reported
+  // "No answer came back for a minute and a half" on a long sealed prompt
+  // (Eden, 2026-11-06). An SSE comment line every 15 s keeps the turn visibly
+  // alive; the panel's parser skips anything that is not `data:`. A turn that
+  // is truly stuck still ends at this function's maxDuration (300 s).
+  const heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch { /* client disconnected */ }
+  }, 15_000);
+
   try {
     const result = await runAssistantStream({
       supabase: sb,
@@ -178,6 +190,7 @@ export default async function handler(req, res) {
   } catch (err) {
     emit({ type: 'error', message: err?.message || 'assistant_failed' });
   } finally {
+    clearInterval(heartbeat);
     res.end();
   }
 }
