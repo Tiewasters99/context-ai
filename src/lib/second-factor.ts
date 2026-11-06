@@ -18,6 +18,7 @@
 
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
+import { CONVERSATIONS_CHANGED_EVENT } from '@/lib/orchestrator-conversations';
 
 export type MatterEntry = 'open' | 'stepup' | 'enrol' | 'none';
 
@@ -115,8 +116,19 @@ export async function reportFactorEvent(
   }
 }
 
-/** Confirm a factor for this session: aal1 → aal2. Returns an error sentence or null. */
+/**
+ * Confirm a factor for this session: aal1 → aal2. Returns an error sentence or null.
+ * On success the sidebar's Conversations list is told to re-read: it loaded at
+ * aal1, where sealed conversations are invisible, and would otherwise go on
+ * showing that list until a page reload (Eden, 2026-11-06, a second PC).
+ */
 export async function confirmFactor(factor: VerifiedFactor, code?: string): Promise<string | null> {
+  const err = await confirmFactorOnce(factor, code);
+  if (!err && typeof window !== 'undefined') window.dispatchEvent(new Event(CONVERSATIONS_CHANGED_EVENT));
+  return err;
+}
+
+async function confirmFactorOnce(factor: VerifiedFactor, code?: string): Promise<string | null> {
   if (factor.factor_type === 'webauthn') {
     const { error } = await supabase.auth.mfa.webauthn.authenticate({ factorId: factor.id });
     return error ? 'The passkey was not confirmed. Try again.' : null;
