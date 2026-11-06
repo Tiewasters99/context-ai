@@ -9,6 +9,7 @@ import AmbientControls from './AmbientControls';
 import RefusalBanner from '@/components/ui/RefusalBanner';
 import FactorBanner from '@/components/account/FactorBanner';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useDraggableLauncher } from '@/hooks/useDraggableLauncher';
 import { ASSISTANT_COMMAND_EVENT } from '@/lib/assistant-bus';
 import { OPEN_CONVERSATION_EVENT } from '@/lib/orchestrator-conversations';
 import { ASSISTANT_THE } from '@/components/ai/assistant-scope';
@@ -32,6 +33,9 @@ export default function MainLayout() {
   // the phone's tab bar included): the Orchestrator button is the only door
   // left on them.
   const shellCovered = onVault || /^\/app\/brief\/[^/]+/.test(location.pathname);
+  // The Orchestrator button can be carried anywhere on screen and remembers
+  // where it was left; a double-click returns it to its corner (2026-11-06).
+  const launcher = useDraggableLauncher('cs.orchestrator.button');
 
   // A command dispatched from any surface (docket highlight-to-Run, etc.)
   // slides the Orchestrator open; Assistant itself executes the prompt.
@@ -144,14 +148,21 @@ export default function MainLayout() {
             it, so those two pages had no way in at all. It now stands above
             them, and shows on a phone there too, where the tab bar is hidden
             or covered. On the Vault it sits above the Vault's own
-            bottom-right cluster. */}
+            bottom-right cluster. 2026-11-06: it can be dragged anywhere
+            (useDraggableLauncher) and remembers where it was left; a
+            double-click puts it back in the corner. `transition-all` is
+            dropped while it is placed, or every drag step would animate. */}
         {!assistantOpen && (!isMobile || shellCovered) && (
           <button
+            ref={launcher.ref}
             onClick={() => setAssistantOpen(true)}
+            onClickCapture={launcher.onClickCapture}
+            onPointerDown={launcher.onPointerDown}
+            onDoubleClick={launcher.onDoubleClick}
             data-testid="orchestrator-button"
-            className={`fixed ${onVault ? 'bottom-20' : 'bottom-5'} right-5 z-[60] h-12 w-12 rounded-full flex items-center justify-center text-[#e8b84a] border border-[rgba(232,184,74,0.35)] shadow-[0_6px_24px_rgba(0,0,0,0.45)] backdrop-blur-[20px] transition-all hover:scale-105 hover:border-[rgba(232,184,74,0.7)] hover:shadow-[0_8px_28px_rgba(232,184,74,0.18)]`}
-            style={{ backgroundColor: 'rgba(14, 14, 22, 0.88)' }}
-            title={`Ask ${ASSISTANT_THE}`}
+            className={`fixed ${onVault ? 'bottom-20' : 'bottom-5'} right-5 z-[60] h-12 w-12 rounded-full flex items-center justify-center text-[#e8b84a] border border-[rgba(232,184,74,0.35)] shadow-[0_6px_24px_rgba(0,0,0,0.45)] backdrop-blur-[20px] ${launcher.placed ? '' : 'transition-all'} hover:scale-105 hover:border-[rgba(232,184,74,0.7)] hover:shadow-[0_8px_28px_rgba(232,184,74,0.18)] ${isMobile ? '' : 'cursor-grab touch-none select-none'}`}
+            style={{ backgroundColor: 'rgba(14, 14, 22, 0.88)', ...launcher.style }}
+            title={`Ask ${ASSISTANT_THE} · drag to move · double-click to return to the corner`}
             aria-label={`Ask ${ASSISTANT_THE}`}
           >
             <Bot size={22} strokeWidth={1.75} />
