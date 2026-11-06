@@ -32,7 +32,7 @@
       "maxDuration": 300
     },
     "api/assistant.mjs": {
-      "maxDuration": 300
+      "maxDuration": 800
     },
     "api/video-discovery.mjs": {
       "maxDuration": 300

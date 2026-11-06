@@ -15,6 +15,7 @@
 
 export const SANDBOX_ACTIONS = [
   'send_to_sandbox', 'copy_document', 'assemble_documents', 'edit_pdf', 'create_deck', 'create_chart',
+  'save_note',
 ] as const;
 export type SandboxAction = (typeof SANDBOX_ACTIONS)[number];
 
@@ -22,6 +23,30 @@ export const isSandboxAction = (a: unknown): a is SandboxAction =>
   typeof a === 'string' && (SANDBOX_ACTIONS as readonly string[]).includes(a);
 
 type Args = Record<string, unknown>;
+
+const str0 = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+
+/** A note's filename: its title, made safe, with .md. */
+export function noteFilename(title: string): string {
+  const base = title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return `${base || 'Note'}.md`;
+}
+
+/**
+ * The /api/sandbox request a proposal becomes. save_note is the one that is
+ * not its own endpoint action: it files a markdown document (file_document)
+ * into the matter. Every other action passes straight through.
+ */
+export function sandboxRequest(action: SandboxAction, args: Args): { action: string; args: Args } {
+  if (action === 'save_note') {
+    const title = str0(args.title) || 'Note';
+    return {
+      action: 'file_document',
+      args: { matter: str0(args.matter), filename: noteFilename(title), title, content: str0(args.markdown) },
+    };
+  }
+  return { action, args };
+}
 
 const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : '');
 const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && !!x) : []);
@@ -84,6 +109,10 @@ export function proposalSentence(
     }
     case 'create_chart':
       return `Make the chart ${quote(str(args.title) || 'Untitled')} and file it in ${where}?`;
+    case 'save_note': {
+      const words = str(args.markdown).split(/\s+/).filter(Boolean).length;
+      return `Save the note ${quote(str(args.title) || 'Note')} (about ${words.toLocaleString('en-US')} words) as a document in ${where}?`;
+    }
   }
 }
 
@@ -124,5 +153,7 @@ export function resultNote(action: SandboxAction, r: Result): string {
       return `Deck ${quote(r.filename || 'the deck')} (${r.slide_count} slides) filed in ${matterLabel(r.matter)} — id ${r.document_id}.${link(r.download_url, 'Download the deck')}`;
     case 'create_chart':
       return `Chart ${quote(r.filename || 'the chart')} filed in ${matterLabel(r.matter)} — id ${r.document_id}.${link(r.download_url, 'Download the chart')}`;
+    case 'save_note':
+      return `Note saved in ${matterLabel(r.matter)} — id ${r.document_id}. It is searchable like any document, so a later conversation can pick up from it.`;
   }
 }

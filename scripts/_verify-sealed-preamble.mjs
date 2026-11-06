@@ -271,7 +271,7 @@ console.log('\n3. The Assistant loop — one preamble on a sealed turn, none on 
     const behind = String(plain.system).slice(orchestrator.length);
     // The menu's own paragraphs, and nothing else: recall (lib/recall-conversations.mjs)
     // and read_pages. Each is a whole paragraph the loop appends for a tool on the menu.
-    const MENU_PARAGRAPHS = [/^\n\nEARLIER CONVERSATIONS:[^\n]*/, /^\n\nREADING PAGES DIRECTLY:[^\n]*/];
+    const MENU_PARAGRAPHS = [/^\n\nEARLIER CONVERSATIONS:[^\n]*/, /^\n\nYOUR WORK BUDGET:[^\n]*/, /^\n\nREADING PAGES DIRECTLY:[^\n]*/];
     let rest = behind;
     for (const re of MENU_PARAGRAPHS) rest = rest.replace(re, '');
     check(rest === '',

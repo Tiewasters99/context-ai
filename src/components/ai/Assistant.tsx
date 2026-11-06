@@ -34,7 +34,7 @@ import { moveVaultDocument } from '@/lib/vault-persist';
 import { sandboxApi } from '@/lib/sandbox-api';
 import { useServerspacesRefresh } from '@/hooks/useServerspaces';
 import {
-  isSandboxAction, documentIdsOf, matterKeyOf, proposalSentence, resultNote, type SandboxAction,
+  isSandboxAction, documentIdsOf, matterKeyOf, proposalSentence, resultNote, sandboxRequest, type SandboxAction,
 } from '@/lib/orchestrator-sandbox';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import PinToggle from '@/components/ui/PinToggle';
@@ -605,6 +605,10 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const proposeTask = async (action: SandboxAction, args: Record<string, unknown>) => {
     const ids = documentIdsOf(action, args);
     const key = matterKeyOf(action, args);
+    if (action === 'save_note' && !key) {
+      note('⚠️ Which matter should the note go in? Open the matter, or name it, and ask again.');
+      return;
+    }
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key);
     const [docRes, matRes] = await Promise.all([
       ids.length
@@ -636,7 +640,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     setRunningTask(true);
     const { action, args } = pendingTask;
     try {
-      const result = await sandboxApi(action, args);
+      const req = sandboxRequest(action, args);
+      const result = await sandboxApi(req.action, req.args);
       note(resultNote(action, result));
       setPendingTask(null);
       if (action === 'send_to_sandbox' || action === 'copy_document') refreshServerspaces();
