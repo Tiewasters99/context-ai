@@ -18,7 +18,7 @@
 //   { text: string, usedTools: string[] }     on success
 //   { error: string }                          on failure (with status code)
 //
-// Note: this function's maxDuration is 300 s (vercel.json), and the answer
+// Note: this function's maxDuration is 800 s (vercel.json), and the answer
 // streams as SSE, so a long tool loop is not cut off mid-way. The browser
 // keeps its own inactivity watchdog (Assistant.tsx) for a request that goes
 // quiet, and a Stop button for the person.

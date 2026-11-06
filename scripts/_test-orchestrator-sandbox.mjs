@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import { orchestratorMenu, runAssistantStream, bedrockCredsFromEnv, SANDBOX_ACTIONS } from '../lib/assistant-core.mjs';
 import { TOOLS } from '../lib/mcp-core.mjs';
 import { buildOrchestratorSystem } from '../lib/orchestrator-system.mjs';
-import { proposalSentence, resultNote, documentIdsOf, matterKeyOf, isSandboxAction } from '../src/lib/orchestrator-sandbox.ts';
+import { proposalSentence, resultNote, documentIdsOf, matterKeyOf, isSandboxAction, sandboxRequest, noteFilename } from '../src/lib/orchestrator-sandbox.ts';
 
 const SIX = ['send_to_sandbox', 'copy_document', 'assemble_documents', 'edit_pdf', 'create_deck', 'create_chart'];
 const names = (menu) => new Set(menu.tools.map((t) => t.name));
@@ -38,7 +38,9 @@ test('A. an ordinary run offers all six, each with mcp-core’s schema and the p
     assert.match(t.description, /does NOT run directly/, `${n} says it is a proposal`);
     assert.ok(!menu.runTools.has(n), `${n} is not a server-run tool`);
   }
-  assert.deepEqual([...SANDBOX_ACTIONS].sort(), [...SIX].sort());
+  assert.deepEqual([...SANDBOX_ACTIONS].sort(), [...SIX, 'save_note'].sort());
+  const note = menu.tools.find((x) => x.name === 'save_note');
+  assert.ok(note && /does NOT run directly/.test(note.description) && !menu.runTools.has('save_note'), 'save_note is a proposal');
   for (const n of ['move_document', 'create_sub_matter', 'sign_out', 'search', 'relay_feedback']) assert.ok(names(menu).has(n), `${n} still offered`);
 });
 
@@ -47,7 +49,7 @@ test('A. a sealed run keeps deck and chart only', () => {
   for (const n of ['send_to_sandbox', 'copy_document', 'assemble_documents', 'edit_pdf', 'move_document', 'relay_feedback']) {
     assert.ok(!sealed.has(n), `${n} not offered inside a seal`);
   }
-  assert.ok(sealed.has('create_deck') && sealed.has('create_chart'), 'deck and chart are filed inside the matter');
+  assert.ok(sealed.has('create_deck') && sealed.has('create_chart') && sealed.has('save_note'), 'deck, chart and note are filed inside the matter');
 });
 
 test('A. a chartered run offers none; a narrowed run only its list', () => {
@@ -450,4 +452,16 @@ test('F. list_matter_contents `title`: every word, edge punctuation dropped, LIK
   assert.equal(r.document_count, 1);
   const schema = TOOLS.find((t) => t.name === 'list_matter_contents');
   assert.ok(schema.inputSchema.properties.title && /by name, pass `title`/.test(schema.description));
+});
+
+test('save_note: becomes a markdown file_document in the matter', () => {
+  const md = '# T\n\n- 8/1 — event (DX 1:2)';
+  const req = sandboxRequest('save_note', { title: 'Timeline: Aug 2015 / draft', markdown: md, matter: 'm-1' });
+  assert.equal(req.action, 'file_document');
+  assert.deepEqual(req.args, { matter: 'm-1', filename: 'Timeline Aug 2015 draft.md', title: 'Timeline: Aug 2015 / draft', content: md });
+  assert.equal(noteFilename('  '), 'Note.md');
+  assert.deepEqual(sandboxRequest('create_deck', { a: 1 }), { action: 'create_deck', args: { a: 1 } });
+  assert.ok(proposalSentence('save_note', { title: 'T', markdown: 'one two three' }, (id) => id, 'Matter X')
+    .startsWith('Save the note “T” (about 3 words) as a document in “Matter X”?'));
+  assert.ok(resultNote('save_note', { document_id: 'd-1', matter: { name: 'Matter X' } }).startsWith('Note saved in “Matter X” — id d-1.'));
 });

@@ -28,7 +28,7 @@
 //   7. The /api/llm gate offline       → Tier B admits only aws-bedrock;
 //      fireworks, anthropic and moonshot are 403 tier_violation.
 import {
-  choosePen, runAssistantStream, bedrockCredsFromEnv, AssistantRefusal, PENS,
+  choosePen, runAssistantStream, bedrockCredsFromEnv, AssistantRefusal, PENS, MAX_ITERATIONS_SEALED as SR,
 } from '../lib/assistant-core.mjs';
 import { providerAllowed, isEscalation, gateLlmRequest } from '../lib/ai-tier-policy.mjs';
 import { eventStreamBody, isRuntimeInvoke } from './_bedrock-eventstream.mjs';
@@ -290,20 +290,20 @@ console.log('\nTier B, a broad question that spends the whole search budget');
     const finals = bodies.filter((b) => b.tool_choice === 'none');
     if (!ev('error') && !result.withheld) pass('the turn completes — no error, nothing withheld');
     else fail('turn failed', { error: ev('error'), result });
-    if (bodies.length === 13 && finals.length === 1 && bodies[12].tool_choice === 'none') {
-      pass('12 search rounds, then exactly one final round with tool use switched off');
+    if (bodies.length === SR + 1 && finals.length === 1 && bodies[SR].tool_choice === 'none') {
+      pass(`${SR} search rounds, then exactly one final round with tool use switched off`);
     } else fail('round count', { requests: bodies.length, finals: finals.length });
     if (finals[0] && /SEARCH BUDGET USED/.test(finals[0].messages[0].content) && Array.isArray(finals[0].tools) && finals[0].tools.length) {
       pass('the final round is told why, and still declares the tools its history refers to');
     } else fail('final round request shape', finals[0] && { system: finals[0].messages[0].content.slice(-200), tools: finals[0].tools?.length });
-    if (finals[0] && finals[0].messages.filter((m) => m.role === 'tool').length === 12) {
-      pass('the final round sees all 12 rounds of search results');
+    if (finals[0] && finals[0].messages.filter((m) => m.role === 'tool').length === SR) {
+      pass(`the final round sees all ${SR} rounds of search results`);
     } else fail('final round history', finals[0]?.messages.map((m) => m.role));
     if (shown === FINAL) pass('the user sees the answer and only the answer');
     else fail('text shown to the user', shown);
     if (!/Let me search/.test(shown) && !/step limit/.test(shown)) pass('no search narration, no step-limit dead end');
     else fail('narration or step-limit text leaked', shown);
-    if (nonBedrock().length === 0) pass('egress witness: only Bedrock across all 13 rounds');
+    if (nonBedrock().length === 0) pass(`egress witness: only Bedrock across all ${SR + 1} rounds`);
     else fail('unexpected egress hosts', hosts());
   } finally { restore(); }
 
@@ -318,7 +318,7 @@ console.log('\nTier B, a broad question that spends the whole search budget');
   try {
     const { events, ev } = await run({ tier: 'B', bedrockCreds: KIMI_CREDS });
     const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
-    if (bodies.length === 13) pass('a tool call on the final round is not run — no 14th request');
+    if (bodies.length === SR + 1) pass('a tool call on the final round is not run — no extra request');
     else fail('request count when the final round ignores tool_choice', bodies.length);
     if (!ev('error') && /ran out of search steps/.test(shown) && !/Let me search/.test(shown)) {
       pass('the user is told plainly the steps ran out, without the earlier narration');
@@ -326,8 +326,8 @@ console.log('\nTier B, a broad question that spends the whole search budget');
   } finally { restore(); }
 
   // Slow rounds: the clock, not the round count, ends the search. Each
-  // request advances a fake clock 40 s; past SEARCH_DEADLINE_MS (210 s) the
-  // next round must be the final one, well inside the 300 s function limit.
+  // request advances a fake clock 40 s; past SEARCH_DEADLINE_MS the
+  // next round must be the final one, well inside the function limit.
   bodies.length = 0;
   const realNow = Date.now;
   let fakeNow = realNow();
@@ -342,7 +342,7 @@ console.log('\nTier B, a broad question that spends the whole search budget');
     const { events, ev } = await run({ tier: 'B', bedrockCreds: KIMI_CREDS });
     const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
     const last = bodies[bodies.length - 1];
-    if (!ev('error') && shown === FINAL && last?.tool_choice === 'none' && bodies.length < 13) {
+    if (!ev('error') && shown === FINAL && last?.tool_choice === 'none' && bodies.length < SR + 1) {
       pass(`slow rounds: the clock ends the search after ${bodies.length - 1} rounds and the answer is still written`);
     } else fail('deadline', { requests: bodies.length, shown, lastToolChoice: last?.tool_choice });
   } finally { restore(); Date.now = realNow; }
