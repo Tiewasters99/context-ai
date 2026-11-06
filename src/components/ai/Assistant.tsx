@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useLayoutEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { X, Send, Square, Maximize2, Minimize2, Eraser } from 'lucide-react';
 import type { ChatMessage } from '@/lib/types';
@@ -177,7 +177,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // names a document — the reader publishes its matter through the context.
   const routeMatterId = location.pathname.startsWith('/app/matterspace/') ? routeId : undefined;
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Commands arrive from other surfaces (the docket's highlight-to-Run
   // chip, next-step Run buttons, SecureChat's open button, the matter
@@ -269,6 +269,12 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     : { tier: 'A', livePen: liveForBound };
   const describe = describeScope(facts);
   const conversationEmpty = messages.length === 1;
+  // An empty conversation opens on the composer itself: a heading, a large
+  // box, and the suggestions in small type beneath it. (Eden, 2026-11-06: a
+  // one-line input at the foot of the panel hid a pasted block of text from
+  // the person typing it.) Once anything is said, the box moves to the foot
+  // and keeps growing with what is typed.
+  const heroComposer = conversationEmpty && !loading && !describe.paused;
 
   // ── The conversation, kept for the session ─────────────────────────────
   //
@@ -919,6 +925,17 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     void send(text);
   };
 
+  // The box grows with its text up to a cap, then scrolls, so a long
+  // question is always visible while it is being written.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const cap = Math.round(window.innerHeight * (heroComposer ? 0.5 : 0.4));
+    el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
+    el.style.overflowY = el.scrollHeight > cap ? 'auto' : 'hidden';
+  }, [input, heroComposer, wide]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -1038,6 +1055,49 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     window.addEventListener(OPEN_CONVERSATION_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_CONVERSATION_EVENT, onOpen);
   }, []);
+
+  // One composer, in one of two places: large in the empty panel, at the
+  // foot once the conversation has begun. Enter sends; Shift+Enter is a new
+  // line. Only one is ever mounted, so the shared inputRef is unambiguous.
+  const renderComposer = (hero: boolean) => (
+    <div
+      className={`flex items-end gap-2 bg-[rgba(20,20,30,0.8)] rounded-xl px-3 py-2.5 border ${
+        hero ? 'border-[rgba(255,255,255,0.14)] focus-within:border-[rgba(255,255,255,0.3)]' : 'border-transparent'
+      }`}
+    >
+      <textarea
+        ref={inputRef}
+        value={input}
+        rows={hero ? 6 : 2}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        disabled={loading}
+        autoFocus={hero}
+        placeholder={loading ? 'Working on it…' : hero ? 'Write your question. Shift+Enter for a new line.' : 'Reply…'}
+        className={`flex-1 resize-none bg-transparent ${hero ? 'text-[15px] min-h-[9rem]' : 'text-sm min-h-[2.75rem]'} leading-[1.55] text-white placeholder-zinc-500 outline-none disabled:opacity-60`}
+      />
+      {loading ? (
+        <button
+          onClick={handleStop}
+          className="p-1 rounded text-[#8a8693] hover:text-[#f0c850] transition-colors"
+          title="Stop"
+          aria-label="Stop"
+        >
+          <Square className="h-4 w-4" />
+        </button>
+      ) : (
+        <button
+          onClick={handleSend}
+          disabled={!input.trim()}
+          title="Send (Enter)"
+          aria-label="Send"
+          className="p-1 rounded text-[#8a8693] hover:text-indigo-400 disabled:opacity-30 disabled:hover:text-[#8a8693] transition-colors"
+        >
+          <Send className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -1264,7 +1324,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               {reopenError}
             </div>
           )}
-          {messages.map((msg) => (
+          {(heroComposer ? [] : messages).map((msg) => (
             <div
               key={msg.id}
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -1280,45 +1340,53 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               </div>
             </div>
           ))}
-          {conversationEmpty && !loading && !describe.paused && (
-            <div className="flex flex-col items-start gap-1.5 pt-1">
+          {heroComposer && (
+            <div className="flex flex-col pt-[8vh] pb-4">
+              <h2 className={`${wide ? 'text-[28px]' : 'text-[22px]'} font-semibold text-[#e8e4de] text-center mb-1`}>
+                How can I help you?
+              </h2>
+              {!describe.sealed && (
+                <p className="text-[12.5px] text-white/50 text-center mb-4">
+                  Ask how something works, what is in your documents, or for something done.
+                </p>
+              )}
+              {describe.sealed && <div className="mb-3" />}
               {reading && !describe.sealed && (
-                <p className="text-[12px] text-white/70 leading-snug mb-1">
+                <p className="text-[12px] text-white/70 leading-snug mb-3 text-center">
                   Reading <span className="text-[#e8d9b8]">“{reading.title ?? 'this document'}”</span>
                   {reading.page ? `, p. ${reading.page}` : ''}. Select a passage on the page and choose Ask to bring it here.
                 </p>
               )}
-              {/* Inside a seal the openings are different: three questions
-                  that work against WORD search, one of them a template the
-                  user finishes. Everywhere else, the panel's usual four. */}
-              {describe.starters.length > 0
-                ? describe.starters.map((s) => (
-                  <button
-                    key={s.label}
-                    type="button"
-                    onClick={() => runStarter(s)}
-                    title={s.select ? 'Puts this in the box with the word selected — type over it' : undefined}
-                    className="max-w-[92%] px-3 py-2 rounded-xl text-left text-[13.5px] font-medium transition-colors"
-                    style={{
-                      border: '1px solid rgba(90,168,143,0.55)',
-                      backgroundColor: 'rgba(90,168,143,0.10)',
-                      color: '#bfe3d5',
-                    }}
-                  >
-                    {s.label}
-                  </button>
-                ))
-                : (reading ? READING_SUGGESTIONS : SUGGESTIONS).map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => stage(s)}
-                    title="Puts this in the box — edit it or press Send"
-                    className="max-w-[85%] px-3 py-2 rounded-xl border border-[rgba(232,184,74,0.65)] bg-[rgba(232,184,74,0.10)] text-left text-[13.5px] font-medium text-[#f5e6c4] hover:bg-[rgba(232,184,74,0.2)] hover:border-[#e8b84a] hover:text-white transition-colors"
-                  >
-                    {s}
-                  </button>
-                ))}
+              {renderComposer(true)}
+              {/* The suggestions, in small type under the box. Each one is put
+                  IN the box, never sent on its own. Inside a seal the openings
+                  are the three WORD-search starters; elsewhere the usual set. */}
+              <div className="mt-3 flex flex-col items-start gap-1">
+                <span className="text-[11px] uppercase tracking-wide text-white/35">Try</span>
+                {describe.starters.length > 0
+                  ? describe.starters.map((s) => (
+                    <button
+                      key={s.label}
+                      type="button"
+                      onClick={() => runStarter(s)}
+                      title={s.select ? 'Puts this in the box with the word selected — type over it' : 'Puts this in the box — edit it or press Send'}
+                      className="text-left text-[12.5px] leading-snug text-[#9fcbbb] hover:text-[#d6f0e6] hover:underline transition-colors"
+                    >
+                      {s.label}
+                    </button>
+                  ))
+                  : (reading ? READING_SUGGESTIONS : SUGGESTIONS).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => stage(s)}
+                      title="Puts this in the box — edit it or press Send"
+                      className="text-left text-[12.5px] leading-snug text-[#d9c79c] hover:text-white hover:underline transition-colors"
+                    >
+                      {s}
+                    </button>
+                  ))}
+              </div>
             </div>
           )}
           {searching && (
@@ -1426,38 +1494,9 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               {describe.pauseNote}
             </p>
           </div>
-        ) : (
+        ) : heroComposer ? null : (
         <div className={`py-3 border-t border-[rgba(255,255,255,0.08)] ${wide ? 'px-6 sm:px-10' : 'px-4'}`}>
-          <div className={`flex items-center gap-2 bg-[rgba(20,20,30,0.8)] rounded-lg px-3 py-2 ${wide ? 'max-w-3xl mx-auto' : ''}`}>
-            <input
-              ref={inputRef}
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={loading}
-              placeholder={loading ? 'Working on it…' : 'Ask anything...'}
-              className="flex-1 bg-transparent text-sm text-white placeholder-zinc-500 outline-none disabled:opacity-60"
-            />
-            {loading ? (
-              <button
-                onClick={handleStop}
-                className="p-1 rounded text-[#8a8693] hover:text-[#f0c850] transition-colors"
-                title="Stop"
-                aria-label="Stop"
-              >
-                <Square className="h-4 w-4" />
-              </button>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={!input.trim()}
-                className="p-1 rounded text-[#8a8693] hover:text-indigo-400 disabled:opacity-30 disabled:hover:text-[#8a8693] transition-colors"
-              >
-                <Send className="h-4 w-4" />
-              </button>
-            )}
-          </div>
+          <div className={wide ? 'max-w-3xl mx-auto' : ''}>{renderComposer(false)}</div>
         </div>
         )}
       </div>
